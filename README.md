@@ -26,10 +26,10 @@ The following code shows the typical workflow of the test data in `./tests/test.
 # step 0: preprocess input fast file
 kmap preproc --fasta_file ./tests/test.fa --res_dir ./test 
 
-# step 2: scanning for motifs 
+# step 1: scanning for motifs 
 kmap scan_motif --res_dir ./test --debug true
 
-# step 3: visualize kmers
+# step 2: visualize kmers
 # now edit the "./test/config.toml" file, in the 3rd section "visualization"
 # change "n_max_iter = 2500" to "n_max_iter = 100"  
 kmap visualize_kmers --res_dir ./test --debug True
@@ -51,7 +51,7 @@ The output folder looks like
 test
   | -- test.fa
 ```
-- **Step 3**: preprocess input fast file
+- **Step 2**: preprocess input fast file
 ```bash 
 kmap preproc --fasta_file ./test/test.fa --res_dir ./test 
 ```
@@ -88,7 +88,7 @@ test
   | -- sample_kmers.tsv: sampled kmers for visualization, second column is final motif label, largest label (2) means random kmers
   | -- sample_kmer_hamdist_mat.pkl: Hamming distance matrix of sampled kmers, used as input for kmer visualization
 ```
--  **Step 3**: visualize kmers
+-  **Step 4**: visualize kmers
 Now now edit the `./test/config.toml` file, 
 in the 3rd section `visualization` change `n_max_iter = 2500` to `n_max_iter = 100`. 
 This will reduce the optimization steps from 2500 to 100, which saves lots of running time.
