@@ -224,7 +224,8 @@ def _scan_motif(res_dir: str, debug=False):
         input_fasta_file = config_dict["general"]["input_fasta_file"]
         co_occur_mat = gen_motif_co_occurence_mat(input_fasta_file, final_conseq_list,
                                                   motif_def_dict, min_motif_cnt=min_motif_cnt, revcom_mode=revcom_mode)
-        co_occur_norm_mat = co_occur_mat / np.diag(co_occur_mat).reshape((-1, 1))
+        co_sum_mat = np.diag(co_occur_mat) + np.diag(co_occur_mat).reshape((-1, 1))
+        co_occur_norm_mat = co_occur_mat / (co_sum_mat - co_occur_mat)
         with open(co_occur_mat_file, "w+") as fh:
             np.savetxt(fh, co_occur_mat, delimiter="\t", fmt="%d")
         with open(co_occur_mat_norm_file, "w+") as fh:
