@@ -1,6 +1,6 @@
 # Kmer Manifold Approximation and Projection (KMAP)
 kmap is a package for visualizing kmers in 2D space. 
-![image](https://github.com/Dionysos-o/kmap/blob/main/kmap_paper/kmapshow.gif)
+![image](https://github.com/Dionysos-o/kmap/blob/main/kmap_paper/kmapshownew.gif)
 
 ## Installation
 ```
