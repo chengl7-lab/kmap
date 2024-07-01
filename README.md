@@ -117,5 +117,5 @@ The motif logo for this consensus sequence is given by `./test/hamming_balls/log
 
 [comment]: <> (Release commands)
 [comment]: <> (python -m build) 
-[comment]: <> (python3 -m twine upload --repository pypi dist/*)
+[comment]: <> (python3 -m twine upload --repository kmer-map dist/*)
 
