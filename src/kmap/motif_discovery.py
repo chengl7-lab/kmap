@@ -4,7 +4,8 @@ from .kmer_count import (comp_kmer_hash_taichi, count_uniq_hash, merge_revcom,
                                  cal_hamming_dist, revcom_hash, mask_input, proc_input,
                                  init_motif_def_dict, mask_ham_ball, hash2kmer, kmer2hash,
                                  cal_hamming_dist_head, cal_hamming_dist_tail, dna2arr,
-                                 reverse_complement, get_hash_dtype, FileNameDict, gen_motif_def_dict)
+                                 reverse_complement, get_hash_dtype, FileNameDict,
+                                 gen_motif_def_dict, get_invalid_hash, remove_duplicate_hash_per_seq)
 import numpy as np
 import pickle
 from scipy.stats import norm
@@ -120,6 +121,7 @@ def _scan_motif(res_dir: str, debug=False):
     min_k = config_dict["kmer_count"]["min_k"]
     max_k = config_dict["kmer_count"]["max_k"]
     revcom_mode = config_dict["kmer_count"]["revcom_mode"]
+    rep_mode = config_dict["general"]["repetitive_mode"]
 
     mask_noise_seq_list = []
     if config_dict["motif_discovery"]["noise_kmer_file"] != "None":
@@ -168,11 +170,15 @@ def _scan_motif(res_dir: str, debug=False):
 
             kmer_cnt_file = Path(res_dir) / FileNameDict[
                 "kmer_count_dir"] / f"k{kmer_len}.pkl"  # [kmer_len, uniq_kh_arr, uniq_kh_cnt_arr]
+            boarder_pkl_file = Path(res_dir) / FileNameDict["processed_fasta_seqboarder_file"]
             consensus_kh_dict = find_motif(seq_np_arr, kmer_len, max_ham_dist, p_uniform_k,
                                            ratio_mu, ratio_std, ratio_cutoff,
                                            top_k, n_trial,
-                                           revcom_mode, save_kmer_cnt_flag=save_kmer_cnt_flag,
+                                           revcom_mode,
+                                           rep_mode,
+                                           save_kmer_cnt_flag=save_kmer_cnt_flag,
                                            kmer_cnt_pkl_file=kmer_cnt_file,
+                                           boarder_pkl_file=boarder_pkl_file,
                                            debug=debug)  # snp_np_arr are mutated in find_motif()
             if debug:
                 print(f"filtered consensus kmers when k = {kmer_len}")
@@ -213,6 +219,31 @@ def _scan_motif(res_dir: str, debug=False):
                     continue
         write_lines(final_conseq_info_list, final_conseq_info_file)
     print("Final consensus sequences generated.")
+
+    if config_dict["motif_discovery"]["motif_pos_density_flag"]:
+        # output the motif kmer position distribution
+        x_step = 0.01
+        x_arr = np.arange(0, 1.0 + x_step, x_step)
+        res = []
+        n_motif_seq_arr = []
+        out_fig_dir = Path(res_dir) / FileNameDict["motif_pos_density_plot_dir"]
+        if not out_fig_dir.exists():
+            out_fig_dir.mkdir()
+        for i, conseq in enumerate(final_conseq_list):
+            # unormalized density, sum approx equal to the number of input sequences that have the motif
+            n_motif_seq, density_arr = get_motif_position_distribution(res_dir, conseq, x_step=x_step, x_arr=x_arr, debug=debug)
+            n_motif_seq_arr.append(n_motif_seq)
+            out_fig_path = out_fig_dir / f"motif{i}-pos.pdf"
+            title_str = f"motif {i}: {conseq} n_motif_seq={n_motif_seq}"
+            _draw_motif_pos_density(title_str, x_arr, density_arr, out_fig_path)
+            res.append(density_arr)
+        res_mat = np.vstack(res)
+        out_fig_path = out_fig_dir / f"motif_all_pos.pdf"
+        _draw_motif_pos_density_all(x_arr, res_mat, final_conseq_list, n_motif_seq_arr, out_fig_path)
+        out_pkl_file_path = Path(res_dir) / FileNameDict["motif_pos_density_file"]
+        with open(out_pkl_file_path, "wb") as fh:
+            pickle.dump([x_arr, res_mat], fh)
+        print("motif position distribution generated.")
 
     # generate motif co-occurence matrix
     co_occur_mat_file = Path(res_dir) / FileNameDict["co_occur_mat_file"]
@@ -390,13 +421,14 @@ def merge_consensus_seqs(conseq_list: List[str]) -> List[str]:
 
 def find_motif(seq_np_arr, kmer_len: int, max_ham_dist, p_unif,
                ratio_mu, ratio_std, ratio_cutoff, top_k=5, n_trial=10,
-               merge_revcom_mode=True, save_kmer_cnt_flag=True,
-               kmer_cnt_pkl_file: Path=None, debug=False) -> dict:
+               merge_revcom_mode=True, rep_mode=False, save_kmer_cnt_flag=True,
+               kmer_cnt_pkl_file: Path=None, boarder_pkl_file: Path=None,
+               debug=False) -> dict:
     """
     main motif discovery code,
         step 0: we try to pick the largest hamming ball for top k kmers each time,
         step 1: check if it passes the significant test
-        step 3: repeat the process n_trial times
+        step 2: repeat the process n_trial times
     Args:
         seq_np_arr: input sequence numpy array (uint8), missing values are 255
         kmer_len: kmer length
@@ -411,6 +443,8 @@ def find_motif(seq_np_arr, kmer_len: int, max_ham_dist, p_unif,
     Returns:
         dict, key is consensus_kmer_hash, value is a tuple of the Hamming ball (proportion, ratio, log10_pvalue)
     """
+    if boarder_pkl_file:
+        assert boarder_pkl_file.exists()
 
     if save_kmer_cnt_flag and kmer_cnt_pkl_file and Path(kmer_cnt_pkl_file).exists():
         with open(Path(kmer_cnt_pkl_file), "rb") as fh:
@@ -419,6 +453,14 @@ def find_motif(seq_np_arr, kmer_len: int, max_ham_dist, p_unif,
     else:
         # first round
         hash_arr = comp_kmer_hash_taichi(seq_np_arr, kmer_len)
+        with open(boarder_pkl_file, "rb") as fh:
+            boarder_mat = pickle.load(fh) # n_seq x 2
+
+        if not rep_mode:
+            hash_dtype = get_hash_dtype(kmer_len)
+            invalid_hash = get_invalid_hash(hash_dtype)
+            hash_arr = remove_duplicate_hash_per_seq(hash_arr, boarder_mat, invalid_hash)
+
         uniq_kh_arr, uniq_kh_cnt_arr = count_uniq_hash(hash_arr, kmer_len)
         # merge revcom
         if merge_revcom_mode:
@@ -778,6 +820,27 @@ def _draw_logo(cnt_mat_numpy_file: str, output_fig_file=None):
         plt.savefig(output_fig_file)
 
 
+def _draw_motif_pos_density(title: str, x_arr: np.ndarray, y_arr: np.ndarray, out_fig_path: str|Path=None):
+    plt.clf()
+    plt.fill_between(x_arr, y_arr, alpha=0.5)
+    plt.xlabel(f"relative motif position in sequence")
+    plt.ylabel("density")
+    plt.title(title)
+    if out_fig_path:
+        plt.savefig(out_fig_path)
+
+def _draw_motif_pos_density_all(x_arr: np.ndarray, y_mat: np.ndarray, conseq_list: List[str],
+                                n_motif_seq_arr: List, out_fig_path: str|Path=None):
+    plt.clf()
+    for i, conseq in enumerate(conseq_list):
+        plt.plot(x_arr, y_mat[i], label=f"m{i}-{conseq} n={n_motif_seq_arr[i]}")
+    plt.xlabel(f"relative motif position in sequence")
+    plt.ylabel("density")
+    plt.legend(loc="upper left")
+    plt.title("motif position distribution")
+    if out_fig_path:
+        plt.savefig(out_fig_path)
+
 
 def gen_motif_co_occurence_mat(input_fasta_file: str, conseq_list: List[str], motif_def_dict: dict, min_motif_cnt=1, revcom_mode=True):
     """
@@ -880,3 +943,96 @@ def _get_motif_cnt(uniq_kh_arr: np.array, uniq_kh_cnt_arr: np.array,
         rc_dist_arr = cal_hamming_dist(uniq_kh_arr, rc_kh, kmer_len)  # revcom
         dist_arr = np.minimum(dist_arr, rc_dist_arr)
     return int(np.sum(uniq_kh_cnt_arr[dist_arr <= max_ham_dist]))
+
+
+def get_motif_position_distribution(res_dir: str, conseq: str, x_step=0.01, x_arr=None, debug=False):
+    """
+    get the position distribution of motif kmers on input sequences
+    motif is firstly searched on the forward strand, if none is found, then search the reverse strand
+    Args:
+        res_dir: result directory
+        conseq: consensus sequence
+        x_step: step size of x in the returned density
+        debug: debug mode
+    Returns:
+        n_motif_seq, position distribution of motif kmers on input sequences (kernel density, un-normalized)
+    """
+
+    config_file_name = FileNameDict["config_file"]  # config.toml
+    config_file_path = Path(res_dir) / config_file_name
+
+    motif_def_file = FileNameDict["motif_def_file"]  # motif_def_table.csv
+    motif_def_file_path = Path(res_dir) / motif_def_file
+
+    proc_fasta_file = FileNameDict["processed_fasta_file"]  # input.bin.pkl
+    proc_fasta_file_path = Path(res_dir) / proc_fasta_file
+
+    boarder_pkl_file = Path(res_dir) / FileNameDict["processed_fasta_seqboarder_file"]
+
+    assert config_file_path.exists()
+    assert motif_def_file_path.exists()
+    assert proc_fasta_file_path.exists()
+
+    # load config and motif_def files
+    with open(config_file_path, "rb") as fh:
+        config_dict = tomllib.load(fh)
+    motif_def_dict = gen_motif_def_dict(config_dict, debug=debug)
+    revcom_mode = config_dict["kmer_count"]["revcom_mode"]
+    #rep_mode = config_dict["general"]["repetitive_mode"]
+
+    with open(proc_fasta_file_path, "rb") as fh:
+        seq_np_arr = pickle.load(fh)
+
+    with open(boarder_pkl_file, "rb") as fh:
+        boarder_mat = pickle.load(fh) # n_seq x 2
+
+    kmer_len = len(conseq)
+    hash_dtype = get_hash_dtype(kmer_len)
+    invalid_hash = get_invalid_hash(hash_dtype)
+    max_ham_dist = motif_def_dict[kmer_len].max_ham_dist
+
+    conseq_kh = kmer2hash(conseq)
+    rc_conseq_kh = revcom_hash(conseq_kh, kmer_len)
+    hash_arr = comp_kmer_hash_taichi(seq_np_arr, kmer_len)
+    dist_arr = cal_hamming_dist(hash_arr, conseq_kh, kmer_len)
+    dist_arr[hash_arr == invalid_hash] = kmer_len
+    motif_flag_arr = dist_arr <= max_ham_dist
+    if revcom_mode:
+        rc_dist_arr = cal_hamming_dist(hash_arr, rc_conseq_kh, kmer_len)  # revcom
+        rc_dist_arr[hash_arr == invalid_hash] = kmer_len
+        rc_motif_flag_arr = dist_arr <= max_ham_dist
+
+    if x_arr is None:
+        x_arr = np.arange(0, 1, x_step)
+    density = np.zeros_like(x_arr)
+    n_seq_forward, n_seq_reverse = 0, 0
+    i_seq = 0
+    for st, en in boarder_mat:
+        # check if the forward strand has a motif
+        if any(motif_flag_arr[st:en]):
+            # if conseq_kh == 0: # for debug purposes
+            #     tmphash_arr = hash_arr[st:en][motif_flag_arr[st:en]]
+            #     print(f"{i_seq=}",[hash2kmer(kh, kmer_len) for kh in tmphash_arr])
+            tmpinds = np.where(motif_flag_arr[st:en])[0]
+            motif_rel_pos_arr = tmpinds / (en - st - kmer_len + 1)
+            density += sum(norm(xi, scale=x_step).pdf(x_arr) for xi in motif_rel_pos_arr) / len(motif_rel_pos_arr)
+            n_seq_forward += 1
+        # check if the reverse strand has a motif
+        elif revcom_mode and any(rc_motif_flag_arr[st:en]):
+            tmpinds = np.where(rc_motif_flag_arr[st:en])[0]
+            motif_rel_pos_arr = 1 - tmpinds / (en - st - kmer_len + 1)
+            density += sum(norm(xi, scale=x_step).pdf(x_arr) for xi in motif_rel_pos_arr) / len(motif_rel_pos_arr)
+            n_seq_reverse += 1
+        i_seq += 1
+
+    if debug:
+        print(f"conseq={conseq} {n_seq_forward=} {n_seq_reverse=} "
+              f"n_seq={n_seq_forward + n_seq_reverse} n_all_seq={len(boarder_mat)}")
+
+
+    return n_seq_forward + n_seq_reverse, density
+
+
+
+
+

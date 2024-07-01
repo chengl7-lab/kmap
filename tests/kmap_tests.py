@@ -1,11 +1,10 @@
 
-from tests.inimotif import *
+from .inimotif import *
 from src.kmap.kmer_count import *
 from src.kmap.motif_discovery import *
 from src.kmap.visualization import kmap, plot_2d_data, knn_smooth, _visualize_kmers
 from src.kmap.motif_discovery import _convert_to_block_arr, _convert_to_block_mat, _scan_motif
 from src.kmap.kmer_count import _preproc
-
 
 import random
 
@@ -54,7 +53,7 @@ def main(input_fasta_file, min_kmer_len, max_kmer_len,
         assert min_kmer_len <= kmer_len <= max_kmer_len
         kmer_cnt_file = out_dir + f"/k{kmer_len}.pkl" # [kmer_len, uniq_kh_arr, uniq_kh_cnt_arr]
         consensus_kh_dict = find_motif(seq_np_arr, kmer_len, max_ham_dist, p_uniform_k, p_cut_off, top_k, n_trial,
-                                       revcom_mode, save_kmer_cnt_flag=True,
+                                       revcom_mode, rep_mode=True, save_kmer_cnt_flag=True,
                                        kmer_cnt_pkl_file=kmer_cnt_file, debug=debug)  # snp_np_arr are mutated in find_motif()
 
         print(f"filtered consensus kmers when k = {kmer_len}")
@@ -137,7 +136,9 @@ def test_proc_input():
     input_fasta_file = "./tests/test.fa"
     res_dir = "./test"
 
-    proc_input(input_fasta_file, res_dir, out_bin_file_name = "input.bin.pkl", debug = True)
+    proc_input(input_fasta_file, res_dir, out_bin_file_name = "input.bin.pkl",
+               out_boarder_bin_file_name= "input.seqboarder.bin.pkl", debug = True)
+
     #rand_seq_file = "test_rand_seq.fasta"
     #test_gen_rand_fa_file(rand_seq_file=rand_seq_file)
     #proc_input("test_rand_seq.fasta", out_dir ="..", debug = True)
@@ -297,7 +298,7 @@ def test_find_motif():
     kmer_cnt_pkl_file = f"./k{kmer_len}.pkl"
 
     res_dict = find_motif(seq_np_arr, kmer_len, max_ham_dist, p_unif,
-                          ratio_mu, ratio_std, ratio_cutoff, kmer_cnt_pkl_file=kmer_cnt_pkl_file)
+                          ratio_mu, ratio_std, ratio_cutoff, rep_mode=True, kmer_cnt_pkl_file=kmer_cnt_pkl_file)
     for kh, values in res_dict.items():
         kh_prop, kh_ratio_log10_pvalue = values
         print(f'{hash2kmer(kh, kmer_len)} {kh_prop*100:02f}% {kh_ratio_log10_pvalue:0.4f}')
@@ -661,7 +662,7 @@ def test_visualize_kmers():
 
 
 if __name__ == "__main__":
-    #test_proc_input()
+    test_proc_input()
     #test_read_default_config_file()
     #test_comp_kmer_hash_taichi()
     #test_count_uniq_hash()
@@ -689,8 +690,8 @@ if __name__ == "__main__":
     #test_kmap()
 
     #gen_test_fa_file()
-    #test_preproc()
+    test_preproc()
     #test_ex_hamball_kh_arr()
     #test_ex_hamball()
-    test_scan_motif()
+    #test_scan_motif()
     #test_visualize_kmers()

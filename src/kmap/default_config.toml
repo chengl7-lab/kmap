@@ -1,9 +1,10 @@
 [general]
 debug = false
 res_dir = "./kmap_output" # directory for storing results
+repetitive_mode = false
 
 [kmer_count]
-min_k = 5
+min_k = 8
 max_k = 16
 revcom_mode = true # reverse complement mode. If false, revcom will not be merged to the original kmer
 
@@ -12,6 +13,7 @@ p_value_cutoff = 1e-10 # Hamming ball ratio
 motif_def_file = "default" # Can be changed to user defined "motif_def_table.csv" file
 noise_kmer_file = "None" # Can be set to user defined file, each line is a noise kmer (can be different length) to be removed from the input
 save_kmer_cnt_flag = true # if intermediate kmer count result should be saved
+motif_pos_density_flag = true # if motif postion distribution will be produced
 top_k = 5 # top 5 consensus sequences will be checked
 n_trial = 10 # try to find maximumly n_trial motifs from the data
 gen_hamball_flag = true # if generating count matrix

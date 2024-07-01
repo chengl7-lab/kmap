@@ -2,10 +2,9 @@ import numpy as np
 from Bio import SeqIO
 import gzip
 import click
-from typing import Callable
+from typing import Callable, Dict, List, Tuple
 import pickle
 import taichi as ti
-from typing import List, Tuple
 from taichi.algorithms import parallel_sort
 from scipy.stats import norm
 
@@ -30,6 +29,9 @@ FileNameDict = {
     "default_motif_def_file": "default_motif_def_table.csv",
     "motif_def_file": "motif_def_table.csv",
     "processed_fasta_file": "input.bin.pkl",
+    "processed_fasta_seqboarder_file": "input.seqboarder.bin.pkl",
+    "motif_pos_density_file": "motif_pos_density.np.pkl",
+    "motif_pos_density_plot_dir": "motif_pos_density",
     "kmer_count_dir": "kmer_count",
     "hamball_dir": "hamming_balls",
     "co_occur_mat_file": "co_occurence_mat.tsv",
@@ -93,7 +95,7 @@ def read_default_config_file(debug=False):
     return default_config_dict
 
 
-def gen_motif_def_dict(config_dict: dict, debug=False):
+def gen_motif_def_dict(config_dict: dict, debug=False) -> Dict:
     """
     generate the motif definition dict
     Args:
@@ -155,11 +157,16 @@ def _preproc(fasta_file: str, res_dir=".", debug=False):
 
     # process input fasta file
     proc_input(config_dict["general"]["input_fasta_file"], config_dict["general"]["res_dir"],
-               out_bin_file_name=FileNameDict["processed_fasta_file"], debug=debug)
+               out_bin_file_name=FileNameDict["processed_fasta_file"],
+               out_boarder_bin_file_name=FileNameDict["processed_fasta_seqboarder_file"],
+               debug=debug)
     return config_dict, motif_def_dict
 
 
-def proc_input(input_fasta_file: str, res_dir=".", out_bin_file_name: str="input.bin.pkl", debug=True):
+def proc_input(input_fasta_file: str, res_dir=".",
+               out_bin_file_name: str="input.bin.pkl",
+               out_boarder_bin_file_name: str="input.seqboarder.bin.pkl",
+               debug=True):
     """
     process input fasta file, convert fasta file to a binary file "input.bin.pkl" in the output directory
     Args:
@@ -170,25 +177,27 @@ def proc_input(input_fasta_file: str, res_dir=".", out_bin_file_name: str="input
     Returns: None
     """
     def get_file_size(fasta_file: str):
-        file_size = 0
+        n_seq, file_size = 0, 0
         for arr in read_dnaseq_file(fasta_file):
+            n_seq += 1
             file_size = file_size + len(arr)
-        return file_size
+        return n_seq, file_size
 
     assert Path(input_fasta_file).exists()
     assert Path(res_dir).exists()
     assert out_bin_file_name.endswith(".pkl")
 
-    buffer_size = get_file_size(input_fasta_file)
+    n_seq, buffer_size = get_file_size(input_fasta_file)
     #input_binary_file = os.path.join(res_dir, out_bin_file_name)
     input_binary_file = str(Path(res_dir) / out_bin_file_name)
+    input_boarder_file = str(Path(res_dir) / out_boarder_bin_file_name)
 
     if debug:
         print(f"Convert input file={input_fasta_file} into binary file {input_binary_file}. buffer_size={buffer_size/2**30}GB.")
 
     buffer = Buffer(buffer_size)
     # convert input fasta file into binary file
-    convert_fasta_to_binary(input_fasta_file, buffer, input_binary_file)
+    convert_fasta_to_binary(input_fasta_file, buffer, n_seq, input_binary_file, input_boarder_file)
 
     print(f"input binary file {input_binary_file} generated.\n")
 
@@ -298,17 +307,28 @@ def read_dnaseq_file(file_name, file_type="fasta") -> np.ndarray:
             yield from read_stream(fh)
 
 
-def convert_fasta_to_binary(fasta_file: str | Path, buffer: Buffer, out_pkl_file: str | Path) -> None:
+def convert_fasta_to_binary(fasta_file: str | Path, buffer: Buffer,
+                            n_seq: int,
+                            out_pkl_file: str | Path,
+                            out_boarder_pkl_file: str | Path) -> None:
     def write_numpy_array(np_arr: np.ndarray, file_name: str | Path):
         assert str(file_name).endswith(".pkl")
         with open(file_name, "wb") as fh:
             pickle.dump(np_arr, fh)
 
-    for arr in read_dnaseq_file(fasta_file):
+    boarder_mat = np.zeros((n_seq, 2), dtype=int)
+
+    pointer = 0
+    for i, arr in enumerate(read_dnaseq_file(fasta_file)):
         flag = buffer.append(arr)
+        # store the start and end position of each sequence
+        boarder_mat[i][0] = pointer
+        boarder_mat[i][1] = pointer + len(arr) - 1
+        pointer += len(arr)
         assert flag
     assert not buffer.is_full
     write_numpy_array(buffer.buffer[0:buffer.pointer], out_pkl_file)
+    write_numpy_array(boarder_mat, out_boarder_pkl_file)
 
 
 # get the numpy dtype to store the kmer cnts
@@ -698,6 +718,29 @@ def init_motif_def_dict(motif_def_file, p_value_cutoff=1e-10) -> dict:
         motif_def_dict[kmer_len] = MotifDef(kmer_len, p_uniform, max_ham_dist, ratio_mu, ratio_std, ratio_cutoff)
 
     return motif_def_dict
+
+
+def remove_duplicate_hash_per_seq(hash_arr: np.array, boarder_mat: np.ndarray, invalid_hash: int) -> np.array:
+    """
+    remove duplicate hash from the hash array of each sequence
+    Args:
+        hash_arr: 1d array, the combined hash array of all sequences, seq separated by invalid hash
+        boarder_mat: n x 2 array, each row is a sequence, first column is start index, second column is end index
+        invalid_hash: invalid hash
+
+    Returns:
+        None
+    """
+    assert boarder_mat.shape[1] == 2
+    for st, en in boarder_mat:
+        tmparr = np.full(en-st, invalid_hash, dtype=hash_arr.dtype)
+        tmp_uniq_vals, inds = np.unique(hash_arr[st:en], return_index=True)
+        tmparr[inds] = tmp_uniq_vals
+        hash_arr[st:en] = tmparr[:]
+    return hash_arr
+
+
+
 
 
 if __name__ == "__main__":

@@ -1,23 +1,10 @@
 # Kmer Manifold Approximation and Projection (KMAP)
 kmap is a package for visualizing kmers in 2D space. 
-![image](https://github.com/Dionysos-o/kmap/blob/main/kmap_paper/kmapshownew.gif)
+-![image](./kmap_cartoon.gif)
 
 ## Installation
 ```
-conda create --name=kmap_test python=3.11
-conda activate kmap_test
-conda install anaconda::scipy
-conda install anaconda::numpy
-conda install anaconda::matplotlib
-conda install anaconda::pandas
-conda install anaconda::click
-conda install anaconda::tomli-w
-conda install anaconda::requests
-conda install conda-forge::biopython
-conda install bioconda::logomaker
-pip install taichi
-
-pip install kmer-map
+conda env create -f environment.yml
 ```
 
 ## Example usage
@@ -54,17 +41,19 @@ test
 ```
 - **Step 2**: preprocess input fast file
 ```bash 
-kmap preproc --fasta_file ./test/test.fa --res_dir ./test 
+kmap preproc --fasta_file ./test/test.fa --res_dir ./test
 ```
 The output folder looks like
 ```
 test
   | -- test.fa
   | -- input.bin.pkl
+  | -- input.seqboarder.bin.pkl
   | -- config.toml
   | -- motif_def_table.csv
 ```
 `input.bin.pkl` is the processed `.pkl` file of the input fasta file `test.fa`, which can be read by the pickle module of python. 
+`input.seqboarder.bin.pkl` is `n_seq x 2` numpy matrix, where the rows index each sequence, and the columns are start and end of each sequence. 
 `config.toml` contains all the kmap parameters for this analysis task. You can modify the parameters according to your own needs.
 `motif_def_table.csv` is the motif definition table, which specify the parameters of the Hamming balls. You can modify the parameters according to your own needs.
 - **Step 3**: scan for motifs
@@ -76,6 +65,7 @@ The `--debug` option can be omitted. The output folder with file/folder descript
 test
   | -- test.fa
   | -- input.bin.pkl
+  | -- input.seqboarder.bin.pkl
   | -- config.toml
   | -- motif_def_table.csv
   | -- kmer_count[folder]: kmer counts of different kmer lengths
@@ -85,6 +75,8 @@ test
   | -- hamming_balls[folder]: Count matrix (calculated from Hamming balls) and logos of final motifs
   | -- co_occurence_mat.tsv: co-occurence matrix of final motifs
   | -- co_occurence_mat.norm.tsv: normalized co-occurence matrix of final motifs
+  | -- motif_pos_density[folder]: motif kmer postion distribution on input sequences, position count from the reverse direction if reverse complement match the motif
+  | -- motif_pos_density.np.pkl: numpy array of the position densities
   | -- sample_kmers.pkl: sampled kmers for visualization
   | -- sample_kmers.tsv: sampled kmers for visualization, second column is final motif label, largest label (2) means random kmers
   | -- sample_kmer_hamdist_mat.pkl: Hamming distance matrix of sampled kmers, used as input for kmer visualization
@@ -125,5 +117,5 @@ The motif logo for this consensus sequence is given by `./test/hamming_balls/log
 
 [comment]: <> (Release commands)
 [comment]: <> (python -m build) 
-[comment]: <> (python3 -m twine upload --repository testpypi dist/*)
+[comment]: <> (python3 -m twine upload --repository pypi dist/*)
 
