@@ -3,9 +3,40 @@ kmap is a package for visualizing kmers in 2D space.
 -![image](./kmap_cartoon.gif)
 
 ## Installation
+
 ```
+conda create --name=kmap_test python=3.11
+conda activate kmap_test
+conda install anaconda::scipy
+conda install anaconda::numpy
+conda install anaconda::matplotlib
+conda install anaconda::pandas
+conda install anaconda::click
+conda install anaconda::tomli-w
+conda install anaconda::requests
+conda install conda-forge::biopython
+conda install bioconda::logomaker
+pip install taichi
+pip install kmer-map
+```
+
+OR
+
+```Mac
+# Mac
 conda env create -f environment.yml
+conda activate kmap_test
 ```
+
+OR
+
+```Linux
+# Linux
+conda env create -f env.yml   
+conda activate kmap_test
+pip install -r requirements.txt
+```
+
 
 ## Example usage
 ### General workflow
