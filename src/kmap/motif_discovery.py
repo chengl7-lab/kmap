@@ -11,6 +11,7 @@ import pickle
 from scipy.stats import norm
 from typing import List, Tuple
 import warnings
+import taichi as ti
 
 from pathlib import Path
 from Bio import SeqIO
@@ -29,13 +30,22 @@ import click
     required=True
     )
 @click.option(
+    '--gpu_mode',
+    type=bool,
+    default=False,
+    help='if GPU is available',
+    required=False
+    )
+@click.option(
     '--debug',
     type=bool,
     default=False,
     help='display debug information.',
     required=False
     )
-def scan_motif(res_dir: str, debug=False):
+def scan_motif(res_dir: str, gpu_mode=False, debug=False):
+    if gpu_mode:
+        ti.init(arch=ti.cuda, default_ip=ti.i64)
     _scan_motif(res_dir, debug)
 
 

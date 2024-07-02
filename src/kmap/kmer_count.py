@@ -51,13 +51,14 @@ ti.set_logging_level(ti.ERROR)
 
 MISSING_VAL = 255
 GPU_MODE = False
-ti.init(arch=ti.cuda, default_ip=ti.i64)
-if ti.cfg.arch == ti.cuda:
-    GPU_MODE = True
-    print("GPU is available")
-else:
-    GPU_MODE = False
-    print("GPU is not available")
+ti.init(arch=ti.cpu, default_ip=ti.i64)
+# ti.init(arch=ti.cuda, default_ip=ti.i64)
+# if ti.cfg.arch == ti.cuda:
+#     GPU_MODE = True
+#     print("GPU is available")
+# else:
+#     GPU_MODE = False
+#     print("GPU is not available")
 
 
 @click.command(name="preproc")
@@ -75,13 +76,22 @@ else:
     required=False
     )
 @click.option(
+    '--gpu_mode',
+    type=bool,
+    default=False,
+    help='if GPU is available',
+    required=False
+    )
+@click.option(
     '--debug',
     type=bool,
     default=False,
     help='display debug information.',
     required=False
     )
-def preproc(fasta_file: str, res_dir=".", debug=False):
+def preproc(fasta_file: str, res_dir=".", gpu_mode=False, debug=False):
+    if gpu_mode:
+        ti.init(arch=ti.cuda, default_ip=ti.i64)
     _preproc(fasta_file, res_dir, debug)
 
 
