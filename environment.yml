@@ -88,7 +88,7 @@ dependencies:
   - pip:
       - colorama==0.4.6
       - dill==0.3.8
-      - kmer-map==0.0.4
+      - kmer-map==0.0.5
       - markdown-it-py==3.0.0
       - mdurl==0.1.2
       - pygments==2.18.0

@@ -102,11 +102,11 @@ test
   | -- kmer_count[folder]: kmer counts of different kmer lengths
   | -- candidate_conseq.csv: consensus sequences of significant Hamming balls of diferent kmer length
   | -- final_conseq.txt: merged consensus seqences of different kmer lengths, final motifs (2 motif in this case)
-  | -- final_conseq.info.txt: contain meta information of final consensensus sequences
+  | -- final_conseq.info.csv: contain meta information of final consensensus sequences
   | -- hamming_balls[folder]: Count matrix (calculated from Hamming balls) and logos of final motifs
   | -- co_occurence_mat.tsv: co-occurence matrix of final motifs
   | -- co_occurence_mat.norm.tsv: normalized co-occurence matrix of final motifs
-  | -- motif_pos_density[folder]: motif kmer postion distribution on input sequences, position count from the reverse direction if reverse complement match the motif
+  | -- motif_pos_density[folder]: motif kmer postion distribution on input sequences
   | -- motif_pos_density.np.pkl: numpy array of the position densities
   | -- sample_kmers.pkl: sampled kmers for visualization
   | -- sample_kmers.tsv: sampled kmers for visualization, second column is final motif label, largest label (2) means random kmers

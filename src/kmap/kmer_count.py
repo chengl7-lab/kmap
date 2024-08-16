@@ -38,7 +38,7 @@ FileNameDict = {
     "co_occur_mat_norm_file": "co_occurence_mat.norm.tsv",
     "candidate_conseq_file": "candidate_conseq.csv",
     "final_conseq_file": "final_conseq.txt",
-    "final_conseq_info_file": "final_conseq.info.txt",
+    "final_conseq_info_file": "final_conseq.info.csv",
     "sample_kmer_pkl_file": "sample_kmers.pkl",
     "sample_kmer_txt_file": "sample_kmers.tsv",
     "sample_kmer_hamdist_mat_file": "sample_kmer_hamdist_mat.pkl",

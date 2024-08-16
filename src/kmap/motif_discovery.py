@@ -151,6 +151,12 @@ def _scan_motif(res_dir: str, debug=False):
         max_ham_dist_list = [0 for _ in mask_noise_seq_list]
         seq_np_arr = mask_ham_ball(seq_np_arr, motif_def_dict, mask_noise_seq_list, max_ham_dist_list)
 
+    # get the number of sequences in the input
+    boarder_pkl_file = Path(res_dir) / FileNameDict["processed_fasta_seqboarder_file"]
+    with open(boarder_pkl_file, "rb") as fh:
+        boarder_mat = pickle.load(fh)  # n_seq x 2
+    n_all_seq = len(boarder_mat)
+
     # load necessary parameters
     top_k = config_dict["motif_discovery"]["top_k"]
     n_trial = config_dict["motif_discovery"]["n_trial"]
@@ -169,7 +175,8 @@ def _scan_motif(res_dir: str, debug=False):
         print(f"{candidate_conseq_file} already exist, re-use it.")
     else:
         # motif discovery
-        res = ["kmer_len,conseq_hash,conseq,hamball_proportion,hamball_ratio,log10_p_value"]
+        res = ["kmer_len,conseq_hash,conseq,conseq_rc,hamball_proportion,"
+               "hamball_ratio,log10_p_value,n_motif_reads,n_all_reads,motif_reads_prop,motif_occurrence,motif_occurrence_per_motif_read"]
         for kmer_len in range(min_k, max_k + 1):
             seq_np_arr[:] = orig_seq_np_arr[:]
             p_uniform_k = motif_def_dict[kmer_len].p_uniform
@@ -195,10 +202,18 @@ def _scan_motif(res_dir: str, debug=False):
             for kh, values in consensus_kh_dict.items():
                 prop, ratio, log10_p_value = values
                 kmer_seq = hash2kmer(kh, kmer_len)
+                n_motif_seq, n_motif_occurrence, density_arr \
+                    = get_motif_position_distribution(res_dir, kmer_seq, x_step=0.5, debug=debug)
+                motif_seq_prop = float(n_motif_seq)/n_all_seq
+                motif_per_motif_seq = float(n_motif_occurrence)/n_motif_seq
                 if debug:
                     print(
-                        f'{hash2kmer(kh, kmer_len)} perc={prop * 100:0.5f}%  hamball_ratio={ratio} log10_p_value={log10_p_value}')
-                res.append(f"{kmer_len},{kh},{kmer_seq},{prop:0.8f},{ratio:0.4f},{log10_p_value:0.4f}")
+                        f'{hash2kmer(kh, kmer_len)} perc={prop * 100:0.5f}% '
+                        f' hamball_ratio={ratio} log10_p_value={log10_p_value}'
+                        f' {n_motif_seq= } {n_motif_occurrence= } {n_all_seq= }')
+                res.append(f"{kmer_len},{kh},{kmer_seq},{reverse_complement(kmer_seq)},{prop:0.8f},"
+                           f"{ratio:0.4f},{log10_p_value:0.4f},{n_motif_seq},{n_all_seq},"
+                           f"{motif_seq_prop:0.4f},{n_motif_occurrence},{motif_per_motif_seq:0.2f}")
                 candidate_conseq_list.append(kmer_seq)
         print(f"kmer counting finished for k={min_k}...{max_k}. Candidate consensus sequences generated.")
         write_lines(res, candidate_conseq_file)
@@ -239,17 +254,22 @@ def _scan_motif(res_dir: str, debug=False):
         out_fig_dir = Path(res_dir) / FileNameDict["motif_pos_density_plot_dir"]
         if not out_fig_dir.exists():
             out_fig_dir.mkdir()
+
         for i, conseq in enumerate(final_conseq_list):
             # unormalized density, sum approx equal to the number of input sequences that have the motif
-            n_motif_seq, density_arr = get_motif_position_distribution(res_dir, conseq, x_step=x_step, x_arr=x_arr, debug=debug)
+            n_motif_seq, n_motif_occurrence, density_arr = get_motif_position_distribution(res_dir, conseq, x_step=x_step, x_arr=x_arr, debug=debug)
             n_motif_seq_arr.append(n_motif_seq)
             out_fig_path = out_fig_dir / f"motif{i}-pos.pdf"
-            title_str = f"motif {i}: {conseq} n_motif_seq={n_motif_seq}"
+            motif_seq_pct = float(n_motif_seq)*100/n_all_seq
+            motif_rep_rate = float(n_motif_occurrence) / n_motif_seq
+            title_str = (f"motif {i}: {conseq} RC={reverse_complement(conseq)}\n "
+                         f"   motif_reads: {n_motif_seq}/{n_all_seq}={motif_seq_pct:.2f}%"
+                         f" motif_per_read: {n_motif_occurrence}/{n_motif_seq}={motif_rep_rate:.2f}   ")
             _draw_motif_pos_density(title_str, x_arr, density_arr, out_fig_path)
             res.append(density_arr)
         res_mat = np.vstack(res)
         out_fig_path = out_fig_dir / f"motif_all_pos.pdf"
-        _draw_motif_pos_density_all(x_arr, res_mat, final_conseq_list, n_motif_seq_arr, out_fig_path)
+        _draw_motif_pos_density_all(x_arr, res_mat, final_conseq_list, n_motif_seq_arr, n_all_seq, out_fig_path)
         out_pkl_file_path = Path(res_dir) / FileNameDict["motif_pos_density_file"]
         with open(out_pkl_file_path, "wb") as fh:
             pickle.dump([x_arr, res_mat], fh)
@@ -832,22 +852,27 @@ def _draw_logo(cnt_mat_numpy_file: str, output_fig_file=None):
 
 def _draw_motif_pos_density(title: str, x_arr: np.ndarray, y_arr: np.ndarray, out_fig_path: str|Path=None):
     plt.clf()
-    plt.fill_between(x_arr, y_arr, alpha=0.5)
+    plt.figure(figsize=(16, 12)) #(width, height)
+    #plt.fill_between(x_arr, y_arr, alpha=0.5)
+    plt.plot(x_arr, y_arr)
     plt.xlabel(f"relative motif position in sequence")
     plt.ylabel("density")
     plt.title(title)
     if out_fig_path:
         plt.savefig(out_fig_path)
 
+
 def _draw_motif_pos_density_all(x_arr: np.ndarray, y_mat: np.ndarray, conseq_list: List[str],
-                                n_motif_seq_arr: List, out_fig_path: str|Path=None):
+                                n_motif_seq_arr: List, n_all_seq: int, out_fig_path: str|Path=None):
     plt.clf()
+    plt.figure(figsize=(16, 12)) #(width, height)
     for i, conseq in enumerate(conseq_list):
-        plt.plot(x_arr, y_mat[i], label=f"m{i}-{conseq} n={n_motif_seq_arr[i]}")
+        plt.plot(x_arr, y_mat[i], label=f"m{i}-{conseq} n={n_motif_seq_arr[i]} "
+                                        f"({float(n_motif_seq_arr[i])*100/n_all_seq:.1f}%)")
     plt.xlabel(f"relative motif position in sequence")
     plt.ylabel("density")
     plt.legend(loc="upper left")
-    plt.title("motif position distribution")
+    plt.title(f"motif position distribution. n_all_seq={n_all_seq}")
     if out_fig_path:
         plt.savefig(out_fig_path)
 
@@ -965,7 +990,9 @@ def get_motif_position_distribution(res_dir: str, conseq: str, x_step=0.01, x_ar
         x_step: step size of x in the returned density
         debug: debug mode
     Returns:
-        n_motif_seq, position distribution of motif kmers on input sequences (kernel density, un-normalized)
+        n_motif_seq: number of reads containing motif
+        n_motif_seq_rep: number of motif seq occurences
+        position distribution of motif kmers on input sequences (kernel density, un-normalized)
     """
 
     config_file_name = FileNameDict["config_file"]  # config.toml
@@ -1015,32 +1042,29 @@ def get_motif_position_distribution(res_dir: str, conseq: str, x_step=0.01, x_ar
     if x_arr is None:
         x_arr = np.arange(0, 1, x_step)
     density = np.zeros_like(x_arr)
-    n_seq_forward, n_seq_reverse = 0, 0
-    i_seq = 0
+    n_motif_seq = 0
+    n_motif_occurrence = 0
     for st, en in boarder_mat:
-        # check if the forward strand has a motif
-        if any(motif_flag_arr[st:en]):
-            # if conseq_kh == 0: # for debug purposes
-            #     tmphash_arr = hash_arr[st:en][motif_flag_arr[st:en]]
-            #     print(f"{i_seq=}",[hash2kmer(kh, kmer_len) for kh in tmphash_arr])
-            tmpinds = np.where(motif_flag_arr[st:en])[0]
-            motif_rel_pos_arr = tmpinds / (en - st - kmer_len + 1)
-            density += sum(norm(xi, scale=x_step).pdf(x_arr) for xi in motif_rel_pos_arr) / len(motif_rel_pos_arr)
-            n_seq_forward += 1
-        # check if the reverse strand has a motif
-        elif revcom_mode and any(rc_motif_flag_arr[st:en]):
-            tmpinds = np.where(rc_motif_flag_arr[st:en])[0]
-            motif_rel_pos_arr = 1 - tmpinds / (en - st - kmer_len + 1)
-            density += sum(norm(xi, scale=x_step).pdf(x_arr) for xi in motif_rel_pos_arr) / len(motif_rel_pos_arr)
-            n_seq_reverse += 1
-        i_seq += 1
+        if revcom_mode:
+            tmp_motif_flag_arr = np.logical_or(motif_flag_arr[st:en], rc_motif_flag_arr[st:en])
+        else:
+            tmp_motif_flag_arr = motif_flag_arr[st:en]
+
+        if not any(tmp_motif_flag_arr):
+            continue
+
+        tmpinds = np.where(tmp_motif_flag_arr)[0]
+        motif_rel_pos_arr = tmpinds / (en - st - kmer_len + 1)
+        density += sum(norm(xi, scale=x_step).pdf(x_arr) for xi in motif_rel_pos_arr) / len(motif_rel_pos_arr)
+
+        n_motif_seq += 1
+        n_motif_occurrence += len(tmpinds)
 
     if debug:
-        print(f"conseq={conseq} {n_seq_forward=} {n_seq_reverse=} "
-              f"n_seq={n_seq_forward + n_seq_reverse} n_all_seq={len(boarder_mat)}")
+        print(f"conseq={conseq} {n_motif_seq=} {n_motif_occurrence=} "
+              f"n_all_seq={len(boarder_mat)}")
 
-
-    return n_seq_forward + n_seq_reverse, density
+    return n_motif_seq, n_motif_occurrence, density
 
 
 

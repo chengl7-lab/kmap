@@ -4,7 +4,7 @@ res_dir = "./kmap_output" # directory for storing results
 repetitive_mode = false
 
 [kmer_count]
-min_k = 8
+min_k = 6
 max_k = 16
 revcom_mode = true # reverse complement mode. If false, revcom will not be merged to the original kmer
 
