@@ -2,6 +2,7 @@ import click
 from .kmer_count import preproc
 from .motif_discovery import  scan_motif, ex_hamball, draw_logo
 from .visualization import visualize_kmers
+from .util import align_conseq, extract_motif_locations
 
 @click.group()
 def cli():
@@ -25,3 +26,5 @@ cli.add_command(scan_motif)
 cli.add_command(ex_hamball)
 cli.add_command(draw_logo)
 cli.add_command(visualize_kmers)
+cli.add_command(align_conseq)
+cli.add_command(extract_motif_locations)

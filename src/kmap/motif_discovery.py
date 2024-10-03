@@ -6,13 +6,16 @@ from .kmer_count import (comp_kmer_hash_taichi, count_uniq_hash, merge_revcom,
                                  cal_hamming_dist_head, cal_hamming_dist_tail, dna2arr,
                                  reverse_complement, get_hash_dtype, FileNameDict,
                                  gen_motif_def_dict, get_invalid_hash, remove_duplicate_hash_per_seq)
+from .util import _align_conseq
+
 import numpy as np
 import pickle
-from scipy.stats import norm
+from scipy.stats import norm, gaussian_kde
 from typing import List, Tuple
 import warnings
 import taichi as ti
 
+import csv
 from pathlib import Path
 from Bio import SeqIO
 import gzip
@@ -111,6 +114,7 @@ def write_lines(str_list: List, outfile: str|Path):
 
 
 def _scan_motif(res_dir: str, debug=False):
+    # load config file
     config_file_name = FileNameDict["config_file"] # config.toml
     config_file_path = Path(res_dir) / config_file_name
 
@@ -199,11 +203,18 @@ def _scan_motif(res_dir: str, debug=False):
                                            debug=debug)  # snp_np_arr are mutated in find_motif()
             if debug:
                 print(f"filtered consensus kmers when k = {kmer_len}")
-            for kh, values in consensus_kh_dict.items():
-                prop, ratio, log10_p_value = values
-                kmer_seq = hash2kmer(kh, kmer_len)
-                n_motif_seq, n_motif_occurrence, density_arr \
-                    = get_motif_position_distribution(res_dir, kmer_seq, x_step=0.5, debug=debug)
+
+            # search all consensus sequences first and store intermediate results
+            tmp_candidate_conseq_list = [hash2kmer(kh, kmer_len) for kh in consensus_kh_dict]
+            input_fasta_file = Path(config_dict["general"]["input_fasta_file"])
+            tmp_occurence_file = Path(res_dir) / FileNameDict["kmer_count_dir"] / f"k{kmer_len}.motif_occurence.csv"
+            gen_motif_occurence_file(tmp_candidate_conseq_list, motif_def_dict, input_fasta_file, tmp_occurence_file, revcom_mode)
+            
+            # generate information about consensus occurences
+            for i, kmer_seq in enumerate(tmp_candidate_conseq_list):
+                kh = kmer2hash(kmer_seq)
+                prop, ratio, log10_p_value = consensus_kh_dict[kh]
+                n_motif_seq, n_motif_occurrence = get_motif_seq_num(tmp_occurence_file, i)
                 motif_seq_prop = float(n_motif_seq)/n_all_seq
                 motif_per_motif_seq = float(n_motif_occurrence)/n_motif_seq
                 if debug:
@@ -243,7 +254,17 @@ def _scan_motif(res_dir: str, debug=False):
                     final_conseq_info_list.append(line)
                     continue
         write_lines(final_conseq_info_list, final_conseq_info_file)
-    print("Final consensus sequences generated.")
+        print("Final consensus sequences generated.")
+
+        conseq_similarity_dir = Path(res_dir) / FileNameDict["conseq_similarity_dir"]
+        if not conseq_similarity_dir.exists():
+            conseq_similarity_dir.mkdir()
+        _align_conseq(str(final_conseq_info_file), str(conseq_similarity_dir))
+
+    # generate motif occurence file for final_conseq_list
+    input_fasta_file = Path(config_dict["general"]["input_fasta_file"])
+    occurence_file = Path(res_dir) / FileNameDict["motif_occurence_file"]
+    gen_motif_occurence_file(final_conseq_list, motif_def_dict, input_fasta_file, occurence_file, revcom_mode)
 
     if config_dict["motif_discovery"]["motif_pos_density_flag"]:
         # output the motif kmer position distribution
@@ -257,7 +278,8 @@ def _scan_motif(res_dir: str, debug=False):
 
         for i, conseq in enumerate(final_conseq_list):
             # unormalized density, sum approx equal to the number of input sequences that have the motif
-            n_motif_seq, n_motif_occurrence, density_arr = get_motif_position_distribution(res_dir, conseq, x_step=x_step, x_arr=x_arr, debug=debug)
+            n_motif_seq, n_motif_occurrence, density_arr = get_motif_pos_density(
+                occurence_file, i, len(conseq), x_step = x_step, x_arr = x_arr)
             n_motif_seq_arr.append(n_motif_seq)
             out_fig_path = out_fig_dir / f"motif{i}-pos.pdf"
             motif_seq_pct = float(n_motif_seq)*100/n_all_seq
@@ -275,58 +297,61 @@ def _scan_motif(res_dir: str, debug=False):
             pickle.dump([x_arr, res_mat], fh)
         print("motif position distribution generated.")
 
-    # generate motif co-occurence matrix
-    co_occur_mat_file = Path(res_dir) / FileNameDict["co_occur_mat_file"]
-    co_occur_mat_norm_file = Path(res_dir) / FileNameDict["co_occur_mat_norm_file"]
-    if co_occur_mat_file.exists():
-        print(f"{co_occur_mat_file}, re-use it!")
-    else:
-        min_motif_cnt = config_dict["motif_discovery"]["min_motif_cnt"]
-        input_fasta_file = config_dict["general"]["input_fasta_file"]
-        co_occur_mat = gen_motif_co_occurence_mat(input_fasta_file, final_conseq_list,
-                                                  motif_def_dict, min_motif_cnt=min_motif_cnt, revcom_mode=revcom_mode)
-        co_sum_mat = np.diag(co_occur_mat) + np.diag(co_occur_mat).reshape((-1, 1))
-        co_occur_norm_mat = co_occur_mat / (co_sum_mat - co_occur_mat)
-        with open(co_occur_mat_file, "w+") as fh:
-            np.savetxt(fh, co_occur_mat, delimiter="\t", fmt="%d")
-        with open(co_occur_mat_norm_file, "w+") as fh:
-            np.savetxt(fh, co_occur_norm_mat, delimiter="\t", fmt="%2.3f")
-    print("motif co-occurence matrix generated.")
+    if config_dict["motif_discovery"]["motif_co_occurence_flag"]:
+        # generate motif co-occurence matrix
+        co_occur_dir = Path(res_dir) / FileNameDict["co_occur_dir"]
+        if not co_occur_dir.exists():
+            co_occur_dir.mkdir()
+        co_occur_mat_file = co_occur_dir / FileNameDict["co_occur_mat_file"]
+        co_occur_mat_norm_file = co_occur_dir /  FileNameDict["co_occur_mat_norm_file"]
+        co_occur_distmat_file = co_occur_dir / FileNameDict["co_occur_dist_mat_file"]
+        co_occur_dist_data_file = co_occur_dir / FileNameDict["co_occur_dist_data_file"]
+        if co_occur_mat_file.exists():
+            print(f"{co_occur_mat_file}, re-use it!")
+        else:
+            co_occur_mat, loc_dist_mat, loc_dist_dict = get_motif_co_occurence_mat(occurence_file, len(final_conseq_list))
+            co_sum_mat = np.diag(co_occur_mat) + np.diag(co_occur_mat).reshape((-1, 1))
+            co_occur_norm_mat = 2 * co_occur_mat / co_sum_mat
+            write_co_occurence_mat(co_occur_mat_file, co_occur_mat + 0.0, final_conseq_list)
+            write_co_occurence_mat(co_occur_mat_norm_file, co_occur_norm_mat, final_conseq_list)
+            write_co_occurence_mat(co_occur_distmat_file, loc_dist_mat, final_conseq_list)
+            write_co_occurence_dist_arr(co_occur_dist_data_file, loc_dist_dict, final_conseq_list)
+            draw_motif_distance_distribution(co_occur_dir, loc_dist_dict, final_conseq_list)
+        print("motif co-occurence matrix generated.")
 
     # sample kmers
-    if not save_kmer_cnt_flag:
-        print(f"kmers cannot be sampled when {save_kmer_cnt_flag=}, quit!")
-        return
-    n_total_sample = config_dict["motif_discovery"]["n_total_sample"]
-    n_motif_sample = config_dict["motif_discovery"]["n_motif_sample"]
-    kmer_count_dir = Path(res_dir) / FileNameDict["kmer_count_dir"]
-    kmer_len = max([len(conseq) for conseq in final_conseq_list])
-    (samp_kh_arr, samp_cnts, samp_label_arr, conseq_list) \
-        = sample_disp_kmer(final_conseq_list, kmer_len, motif_def_dict,
-            kmer_count_dir=kmer_count_dir, n_total_sample = n_total_sample,
-            n_motif_kmer = n_motif_sample, revcom_mode = revcom_mode)
-    sample_kmer_pkl_file = Path(res_dir) / FileNameDict["sample_kmer_pkl_file"]
-    sample_kmer_txt_file = Path(res_dir) / FileNameDict["sample_kmer_txt_file"]
-    with open(sample_kmer_pkl_file, "wb") as fh:
-        pickle.dump([samp_kh_arr, samp_cnts, samp_label_arr, conseq_list], fh)
-    sample_kmer_lines = []
-    for kh, cnt, label in zip(samp_kh_arr, samp_cnts, samp_label_arr):
-        for _ in range(cnt):
-            sample_kmer_lines.append(f"{hash2kmer(kh, kmer_len)}\t{label}")
-    write_lines(sample_kmer_lines, sample_kmer_txt_file)
-    print(f"kmers are sampled for visualization. {kmer_len= }, {n_total_sample= }, {n_motif_sample= }")
+    if config_dict["motif_discovery"]["sample_kmer_flag"] and not save_kmer_cnt_flag:
+        print(f"kmers cannot be sampled when {save_kmer_cnt_flag=}, skip kmer sampling!")
+    if config_dict["motif_discovery"]["sample_kmer_flag"] and save_kmer_cnt_flag:
+        n_total_sample = config_dict["motif_discovery"]["n_total_sample"]
+        n_motif_sample = config_dict["motif_discovery"]["n_motif_sample"]
+        kmer_count_dir = Path(res_dir) / FileNameDict["kmer_count_dir"]
+        kmer_len = max([len(conseq) for conseq in final_conseq_list])
+        (samp_kh_arr, samp_cnts, samp_label_arr, conseq_list) \
+            = sample_disp_kmer(final_conseq_list, kmer_len, motif_def_dict,
+                kmer_count_dir=kmer_count_dir, n_total_sample = n_total_sample,
+                n_motif_kmer = n_motif_sample, revcom_mode = revcom_mode)
+        sample_kmer_pkl_file = Path(res_dir) / FileNameDict["sample_kmer_pkl_file"]
+        sample_kmer_txt_file = Path(res_dir) / FileNameDict["sample_kmer_txt_file"]
+        with open(sample_kmer_pkl_file, "wb") as fh:
+            pickle.dump([samp_kh_arr, samp_cnts, samp_label_arr, conseq_list], fh)
+        sample_kmer_lines = []
+        for kh, cnt, label in zip(samp_kh_arr, samp_cnts, samp_label_arr):
+            for _ in range(cnt):
+                sample_kmer_lines.append(f"{hash2kmer(kh, kmer_len)}\t{label}")
+        write_lines(sample_kmer_lines, sample_kmer_txt_file)
+        print(f"kmers are sampled for visualization. {kmer_len= }, {n_total_sample= }, {n_motif_sample= }")
 
-    # calculate Hamming distance between sampled kmers
-    hamdist_mat = cal_samp_kmer_hamdist_mat(samp_kh_arr, samp_cnts, samp_label_arr, conseq_list, kmer_len,
-                                            uniq_dist_flag = False)
-    label_arr = _convert_to_block_arr(samp_label_arr, samp_cnts)
-    sample_kmer_hamdist_mat_file = Path(res_dir) / FileNameDict["sample_kmer_hamdist_mat_file"]
-    with open(sample_kmer_hamdist_mat_file, "wb") as fh:
-        pickle.dump([kmer_len, hamdist_mat, label_arr], fh)
-    print(f"Hamming distance matrix of sampled kmers are generated.")
+        # calculate Hamming distance between sampled kmers
+        hamdist_mat = cal_samp_kmer_hamdist_mat(samp_kh_arr, samp_cnts, samp_label_arr, conseq_list, kmer_len,
+                                                 uniq_dist_flag = False)
+        label_arr = _convert_to_block_arr(samp_label_arr, samp_cnts)
+        sample_kmer_hamdist_mat_file = Path(res_dir) / FileNameDict["sample_kmer_hamdist_mat_file"]
+        with open(sample_kmer_hamdist_mat_file, "wb") as fh:
+            pickle.dump([kmer_len, hamdist_mat, label_arr], fh)
+        print(f"Hamming distance matrix of sampled kmers are generated.")
 
-    gen_hamball_flag = config_dict["motif_discovery"]["gen_hamball_flag"]
-    if gen_hamball_flag:
+    if config_dict["motif_discovery"]["gen_hamball_flag"]:
         for i, conseq in enumerate(final_conseq_list):
             if debug:
                 print(f"generating motif count matrix and draw logo for motif {i}: {conseq}")
@@ -877,194 +902,352 @@ def _draw_motif_pos_density_all(x_arr: np.ndarray, y_mat: np.ndarray, conseq_lis
         plt.savefig(out_fig_path)
 
 
-def gen_motif_co_occurence_mat(input_fasta_file: str, conseq_list: List[str], motif_def_dict: dict, min_motif_cnt=1, revcom_mode=True):
+def draw_motif_distance_distribution(output_dir: Path, dist_dict: dict, conseq_list: List[str]):
     """
-    get the co-occurence count matrix of different motifs by scanning each read in the input fasta file
+    draw the motif distance distribution
     Args:
-        input_fasta_file: input fasta file
-        conseq_list: consensus sequences of motifs
-        motif_def_dict: motif definition table
-        min_motif_cnt: minimum number of observed motif in each read
-        revcom_mode: if reverse complement should be considered
+        output_dir: output dir
+        dist_dict: dictionary that contains all the distances between motifs in input reads
+        conseq_list: cosensus sequence list
 
     Returns:
-        n_motif x n_motif count matrix
+        None
+    """
+    conseq_list = [f"m{i}_{s}_{reverse_complement(s)}" for i, s in enumerate(conseq_list)]
+    for i, j in dist_dict:
+        tmplist = dist_dict[(i, j)]
+        if len(tmplist) == 0:
+            continue
+        plt.clf()
+        plt.figure(figsize=(16, 12))  # (width, height)
+        counts, bins, _ = plt.hist(tmplist, bins='auto', histtype='stepfilled', alpha=0.7)
+        plt.plot(tmplist, np.full_like(tmplist, -0.01), '|k', markeredgewidth=1)
+        kde = gaussian_kde(tmplist)
+        x_range = np.linspace(min(tmplist), max(tmplist), 100)
+        kde_values = kde(x_range)
+        scaling_factor = np.max(counts) / np.max(kde_values)
+        plt.plot(x_range, kde_values * scaling_factor, 'r-', linewidth=2)
+        plt.title(conseq_list[i] + "-" + conseq_list[j])
+        plt.xlabel(f"distance between motifs m{i} and m{j}")
+        plt.ylabel("counts")
+        out_fig_path = output_dir / f"m{i}-m{j}.pdf"
+        plt.savefig(out_fig_path)
+
+
+def write_co_occurence_dist_arr(output_file: Path, dist_dict, conseq_list: List[str]):
+    """
+    output the distances between different motifs that co-occured
+    Args:
+        output_file: output file
+        dist_dict: distances collected reads with co-occurence
+        conseq_list: consensus sequence list
+
+    Returns:
+        None
+    """
+    conseq_list = [f"m{i}_{s}_{reverse_complement(s)}" for i, s in enumerate(conseq_list)]
+    with open(output_file, "w") as fh:
+        for i, j in dist_dict:
+            tmplist = dist_dict[(i, j)]
+            if len(tmplist) == 0:
+                continue
+            fh.write(conseq_list[i] + "-" + conseq_list[j] + "\n")
+            tmplist = [f"{n:.2f}" for n in tmplist]
+            fh.write("\t".join(tmplist) + "\n")
+
+
+def write_co_occurence_mat(output_file: Path, dist_mat: np.ndarray, conseq_list: List[str]):
+    """
+    output distance matrix with consensus seq annotation
+    Args:
+        output_file: output file
+        dist_mat: dist matrix in np.array, n x n
+        conseq_list: consequence seq list, 1 x n
+
+    Returns:
+        None
 
     """
-    def read_stream(fh):
-        for rec in SeqIO.parse(fh, "fasta"):
-            yield str(rec.seq).upper()
+    assert len(conseq_list) == len(dist_mat)
+    rc_conseq_list = [reverse_complement(seq) for seq in conseq_list]
+    conseq_list = [f"m{i}_{s}" for i, s in enumerate(conseq_list)]
+    rc_conseq_list = [f"m{i}_{s}" for i, s in enumerate(rc_conseq_list)]
+    with open(output_file, "w") as fh:
+        header = ["RC"] + conseq_list
+        fh.write("\t".join(header) + "\n")
+        for i, arr in enumerate(dist_mat):
+            tmpstr = np.array2string(arr, formatter={'float_kind': lambda x: "%.2f" % x}).strip('[]').replace(' ', '\t')
+            fh.write(rc_conseq_list[i] + "\t" + tmpstr + "\n")
 
-    def read_fasta(input_fasta_file):
-        if input_fasta_file.endswith(".gz"):
-            with gzip.open(input_fasta_file, "rt") as fh:
-                yield from read_stream(fh)
-        else:
-            with open(input_fasta_file, "r") as fh:
-                yield from read_stream(fh)
+def get_motif_co_occurence_mat(occurence_file_path: Path, n_conseq: int):
+    """
+    Generate a co-occurrence matrix for motifs based on the occurrence file.
 
-    n_conseq = len(conseq_list)
-    assert  n_conseq > 0
+    Args:
+        occurence_file_path (Path): Path to the file containing motif occurrences.
+        n_conseq (int): Number of consensus sequences (motifs).
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray, Dict]:
+            - res_mat (np.ndarray): Co-occurrence matrix (n_conseq x n_conseq).
+            - dist_mat (np.ndarray): Average distance matrix between motifs (n_conseq x n_conseq).
+            - dist_dict (Dict): Dictionary containing lists of distances between motif pairs.
+
+    The function reads the occurrence file and computes:
+    1. A co-occurrence matrix where element (i,j) represents how many times motifs i and j appear together.
+    2. An average distance matrix where element (i,j) is the average distance between motifs i and j when they co-occur.
+    3. A dictionary containing all observed distances between each pair of motifs.
+
+    The diagonal of res_mat contains the total count of each motif across all sequences.
+    """
+    assert n_conseq > 0
     res_mat = np.zeros((n_conseq, n_conseq), dtype=int)
-    for seq in read_fasta(input_fasta_file):
-        cnt_arr = get_motif_co_occurence_cnt_arr(seq, conseq_list, motif_def_dict, revcom_mode=revcom_mode)
-        motif_inds = np.where(cnt_arr >= min_motif_cnt)[0]
-        for i in range(len(motif_inds)):
-            for j in range(i, len(motif_inds)):
-                res_mat[motif_inds[i], motif_inds[j]] += 1
-    diag_vec = np.diag(res_mat)
-    diag_inds = np.diag_indices(n_conseq)
-    res_mat += np.transpose(res_mat)
-    res_mat[diag_inds] = diag_vec
+    dist_mat = np.zeros((n_conseq, n_conseq), dtype=float)
+    individual_counts = np.zeros(n_conseq, dtype=int)
+    dist_dict = {(i,j):[] for i in range(n_conseq) for j in range(i+1,n_conseq)}
 
-    return res_mat
+    with open(occurence_file_path, 'r', newline='') as csvfile:
+        csv_reader = csv.reader(csvfile, delimiter=';')
+        assert len(next(csv_reader)) == n_conseq + 2  # Skip header row
 
+        for row in csv_reader:
+            # row is a list, first column is read index, last column in read length
+            motif_inds = [i for i, e in enumerate(row[1:-1]) if e.strip() != ""]
+            motif_inds = np.array(motif_inds, dtype=int)
+            individual_counts[motif_inds] += 1
+            if len(motif_inds) <= 1:
+                continue
+            tmp_pos_arr = np.zeros(n_conseq)
+            for i in motif_inds:
+                tmp_pos_arr[i] = np.median(np.array([int(pos) for pos in row[i+1].split(",")]))
+            for i in range(len(motif_inds)):
+                for j in range(i + 1, len(motif_inds)):  # Note: changed to i+1 to exclude diagonal
+                    ii, jj = [motif_inds[i], motif_inds[j]]
+                    res_mat[ii, jj] += 1
+                    res_mat[jj, ii] += 1
+                    dist_dict[(ii,jj)].append(np.abs(tmp_pos_arr[ii] - tmp_pos_arr[jj]))
+                    #dist_mat[ii, jj] += np.abs(tmp_pos_arr[ii] - tmp_pos_arr[jj])
+                    #dist_mat[jj, ii] += np.abs(tmp_pos_arr[ii] - tmp_pos_arr[jj])
+        # Set the diagonal elements using individual counts
+        np.fill_diagonal(res_mat, individual_counts)
 
-def get_motif_co_occurence_cnt_arr(dna_seq: str, conseq_list: List[str], motif_def_dict: dict, revcom_mode=True) -> np.ndarray:
+        for i in range(n_conseq):
+            for j in range(i+1, n_conseq):
+                if len(dist_dict[(i, j)]) == 0:
+                    dist_mat[i, j] = 1e6
+                    dist_mat[j, i] = dist_mat[i, j]
+                else:
+                    dist_mat[i, j] = np.median(dist_dict[(i, j)])
+                    dist_mat[j, i] = dist_mat[i, j]
+
+        #dist_mat = dist_mat / res_mat
+
+    return res_mat, dist_mat, dist_dict
+
+def get_motif_pos_density(occurence_file_path: Path, motif_index: int, kmer_len: int, x_step=0.01, x_arr=None):
     """
-    get the counts of each input motif (hamming ball) for a given DNA sequence
-    Args:
-        dna_seq: input dna sequence
-        conseq_list: consensus sequence list, consensus length can be different
-        motif_def_dict: motif definition dictionary, kmer_len : MotifDef obj
-        revcom_mode: if reverse complement should be considered
-    Returns:
-        a numpy array showing the counts for each motif
+    Calculate the position density of a specific motif from an occurrence file.
+
+    This function reads a motif occurrence file, extracts the positions of a specified motif,
+    and calculates its position density across all sequences.
+
+    Parameters
+    ----------
+    occurence_file_path : Path
+        Path to the motif occurrence CSV file. The file should be semicolon-delimited with
+        the following structure:
+        - First column: sequence index from the original FASTA file
+        - Middle columns: motif occurrences (empty cell means no occurrence)
+        - Last column: sequence length
+    motif_index : int
+        Index of the motif to analyze (0-based, excluding the sequence index column)
+    kmer_len : int
+        Length of the k-mer motif
+    x_step : float, optional
+        Step size for the x-axis in the density calculation (default is 0.01)
+    x_arr : array-like, optional
+        Custom x-axis array for density calculation. If provided, x_step is ignored.
+
+    Returns
+    -------
+    tuple
+        A tuple containing three elements:
+        - int: Number of lines containing the motif
+        - int: Total occurrences of the motif
+        - numpy.ndarray: Density array
+
+    Raises
+    ------
+    FileNotFoundError
+        If the occurrence file does not exist
+    IndexError
+        If the motif_index is out of range for the given file
+
+    Notes
+    -----
+    The function calculates the density of motif positions across all sequences,
+    normalizing the positions to account for different sequence lengths.
+
+    Examples
+    --------
+    >>> path = Path("motif_occurrences.csv")
+    >>> lines, occurrences, density = get_motif_pos_density(path, motif_index=2, kmer_len=6)
+    >>> plt.plot(np.arange(0, 1, 0.01), density)
+    >>> plt.show()
     """
-
-    assert len(conseq_list) > 0
-    conseq_kh_list = []
-    conseq_len_list = []
-    for conseq in conseq_list:
-        conseq_len_list.append(len(conseq))
-        conseq_kh_list.append(kmer2hash(conseq))
-
-    seq_np_arr = dna2arr(dna_seq, append_missing_val_flag=False)
-    kh_arr_dict = {}
-    uniq_conseq_len_arr = np.unique(conseq_len_list)
-    for kmer_len in uniq_conseq_len_arr:
-        hash_arr = comp_kmer_hash_taichi(seq_np_arr, kmer_len)
-        uniq_kh_arr, uniq_kh_cnt_arr = count_uniq_hash(hash_arr, kmer_len)
-        kh_arr_dict[kmer_len] = (uniq_kh_arr, uniq_kh_cnt_arr)
-
-    res = np.zeros(len(conseq_list), dtype=int)
-    for i in range(len(conseq_list)):
-        conseq_kh, conseq_len = conseq_kh_list[i], conseq_len_list[i]
-        uniq_kh_arr, uniq_kh_cnt_arr = kh_arr_dict[conseq_len]
-        max_ham_dist = motif_def_dict[conseq_len].max_ham_dist
-        res[i] = _get_motif_cnt(uniq_kh_arr, uniq_kh_cnt_arr, conseq_len, conseq_kh, max_ham_dist,
-                                rev_com_mode=revcom_mode)
-    return res
-
-
-def _get_motif_cnt(uniq_kh_arr: np.array, uniq_kh_cnt_arr: np.array,
-                               kmer_len: int, conseq_kh: np.uint64,
-                               max_ham_dist: int, rev_com_mode=True) -> int:
-    """
-    get the count of motif from input kh_arr
-    Args:
-        uniq_kh_arr: unique kmer hash array
-        uniq_kh_cnt_arr: count of each unique kmer hash
-        kmer_len: kmer length
-        conseq_kh: hash of consequence sequence
-        max_ham_dist: maximum hamming distance of hamming ball
-        rev_com_mode: if revcom should be considered
-    Returns:
-        number of kmers fall in the hamming ball
-    """
-    dist_arr = cal_hamming_dist(uniq_kh_arr, conseq_kh, kmer_len)
-    if rev_com_mode:
-        rc_kh = revcom_hash(conseq_kh, kmer_len)
-        rc_dist_arr = cal_hamming_dist(uniq_kh_arr, rc_kh, kmer_len)  # revcom
-        dist_arr = np.minimum(dist_arr, rc_dist_arr)
-    return int(np.sum(uniq_kh_cnt_arr[dist_arr <= max_ham_dist]))
-
-
-def get_motif_position_distribution(res_dir: str, conseq: str, x_step=0.01, x_arr=None, debug=False):
-    """
-    get the position distribution of motif kmers on input sequences
-    motif is firstly searched on the forward strand, if none is found, then search the reverse strand
-    Args:
-        res_dir: result directory
-        conseq: consensus sequence
-        x_step: step size of x in the returned density
-        debug: debug mode
-    Returns:
-        n_motif_seq: number of reads containing motif
-        n_motif_seq_rep: number of motif seq occurences
-        position distribution of motif kmers on input sequences (kernel density, un-normalized)
-    """
-
-    config_file_name = FileNameDict["config_file"]  # config.toml
-    config_file_path = Path(res_dir) / config_file_name
-
-    motif_def_file = FileNameDict["motif_def_file"]  # motif_def_table.csv
-    motif_def_file_path = Path(res_dir) / motif_def_file
-
-    proc_fasta_file = FileNameDict["processed_fasta_file"]  # input.bin.pkl
-    proc_fasta_file_path = Path(res_dir) / proc_fasta_file
-
-    boarder_pkl_file = Path(res_dir) / FileNameDict["processed_fasta_seqboarder_file"]
-
-    assert config_file_path.exists()
-    assert motif_def_file_path.exists()
-    assert proc_fasta_file_path.exists()
-
-    # load config and motif_def files
-    with open(config_file_path, "rb") as fh:
-        config_dict = tomllib.load(fh)
-    motif_def_dict = gen_motif_def_dict(config_dict, debug=debug)
-    revcom_mode = config_dict["kmer_count"]["revcom_mode"]
-    #rep_mode = config_dict["general"]["repetitive_mode"]
-
-    with open(proc_fasta_file_path, "rb") as fh:
-        seq_np_arr = pickle.load(fh)
-
-    with open(boarder_pkl_file, "rb") as fh:
-        boarder_mat = pickle.load(fh) # n_seq x 2
-
-    kmer_len = len(conseq)
-    hash_dtype = get_hash_dtype(kmer_len)
-    invalid_hash = get_invalid_hash(hash_dtype)
-    max_ham_dist = motif_def_dict[kmer_len].max_ham_dist
-
-    conseq_kh = kmer2hash(conseq)
-    rc_conseq_kh = revcom_hash(conseq_kh, kmer_len)
-    hash_arr = comp_kmer_hash_taichi(seq_np_arr, kmer_len)
-    dist_arr = cal_hamming_dist(hash_arr, conseq_kh, kmer_len)
-    dist_arr[hash_arr == invalid_hash] = kmer_len
-    motif_flag_arr = dist_arr <= max_ham_dist
-    if revcom_mode:
-        rc_dist_arr = cal_hamming_dist(hash_arr, rc_conseq_kh, kmer_len)  # revcom
-        rc_dist_arr[hash_arr == invalid_hash] = kmer_len
-        rc_motif_flag_arr = dist_arr <= max_ham_dist
-
+    lines_with_motif = 0
+    total_occurrences = 0
     if x_arr is None:
         x_arr = np.arange(0, 1, x_step)
     density = np.zeros_like(x_arr)
-    n_motif_seq = 0
-    n_motif_occurrence = 0
-    for st, en in boarder_mat:
-        if revcom_mode:
-            tmp_motif_flag_arr = np.logical_or(motif_flag_arr[st:en], rc_motif_flag_arr[st:en])
-        else:
-            tmp_motif_flag_arr = motif_flag_arr[st:en]
 
-        if not any(tmp_motif_flag_arr):
+    with open(occurence_file_path, 'r', newline='') as csvfile:
+        csv_reader = csv.reader(csvfile, delimiter=';')
+        next(csv_reader)  # Skip header row
+
+        for row in csv_reader:
+            tmpstr = row[motif_index+1].strip()
+            if tmpstr == "": # +1 because first column is seq index
+                continue
+            seq_len = float(row[-1].strip())
+            tmparr = [int(n) for n in tmpstr.split(",")]
+            motif_rel_pos_arr = [(loc + 0.0) / (seq_len - kmer_len + 1) for loc in tmparr]
+            density += sum(norm(xi, scale=x_step).pdf(x_arr) for xi in motif_rel_pos_arr) / len(motif_rel_pos_arr)
+            assert len(tmparr) > 0
+            lines_with_motif += 1
+            total_occurrences += len(tmparr)
+    return lines_with_motif, total_occurrences, density
+
+def get_motif_seq_num(occurence_file_path: Path, motif_index: int) -> Tuple[int, int]:
+    """
+    Parse the motif occurrence file and return statistics for a specific motif.
+
+    This function reads a semicolon-delimited CSV file containing motif occurrence data.
+    It counts the number of sequences containing the specified motif and the total
+    number of occurrences of that motif across all sequences.
+
+    Args:
+        occurence_file_path (Path): Path to the motif occurrence CSV file.
+            The file should be semicolon-delimited with the following structure:
+            - First column: sequence index
+            - Middle columns: motif occurrences (empty if no occurrence)
+            - Last column: sequence length
+        motif_index (int): Index of the motif to analyze (0-based, excluding the sequence index column)
+
+    Returns:
+        Tuple[int, int]: A tuple containing two integers:
+            - Number of sequences containing the motif
+            - Total number of occurrences of the motif across all sequences
+
+    Raises:
+        FileNotFoundError: If the specified file does not exist.
+        IndexError: If the motif_index is out of range for the given file.
+
+    Example:
+        >>> path = Path("motif_occurrences.csv")
+        >>> motif_index = 2
+        >>> seq_count, total_occurrences = get_motif_seq_num(path, motif_index)
+        >>> print(f"Sequences with motif: {seq_count}")
+        >>> print(f"Total occurrences: {total_occurrences}")
+    """
+    lines_with_motif = 0
+    total_occurrences = 0
+
+    with open(occurence_file_path, 'r', newline='') as csvfile:
+        csv_reader = csv.reader(csvfile, delimiter=';')
+        next(csv_reader)  # Skip header row
+
+        for row in csv_reader:
+            tmpstr = row[motif_index+1].strip()
+            if tmpstr == "": # +1 because first column is seq index
+                continue
+            seq_len = float(row[-1].strip())
+            tmparr = [int(n) for n in tmpstr.split(",")]
+            assert len(tmparr) > 0
+            lines_with_motif += 1
+            total_occurrences += len(tmparr)
+    return lines_with_motif, total_occurrences
+
+
+def gen_motif_occurence_file(conseq_list: List[str], motif_def_dict: dict, 
+                             input_fasta_file: Path, output_file: Path, revcom_mode=True):
+    """
+    Generate a file with motif occurrence information for each sequence in the input fasta file.
+    
+    Args:
+        conseq_list: List of consensus sequences for motifs.
+        motif_def_dict: motif definition dictionary, kmer_len : MotifDef obj
+        input_fasta_file: Path to the input fasta file.
+        output_file: Path to the output file.
+    """
+    assert input_fasta_file.exists()
+        
+    with open(output_file, 'w') as out_file:
+        tmp_header = ";".join([f"motif_{i}_{conseq_list[i]}" for i in range(len(conseq_list))])
+        out_file.write("seq_ind;" + tmp_header + ";seq_len\n")
+        for i, record in enumerate(SeqIO.parse(str(input_fasta_file), "fasta")):
+            seq_np_arr = dna2arr(str(record.seq).upper(), append_missing_val_flag=False)
+            motif_flag, motif_locations_str = get_motif_occurence(seq_np_arr, conseq_list, motif_def_dict, revcom_mode)
+            if not motif_flag:
+                continue
+            out_file.write(f"{i};{motif_locations_str};{len(seq_np_arr)}\n")
+
+
+def get_motif_occurence(seq_np_arr: np.ndarray, conseq_list: List[str], motif_def_dict: dict, revcom_mode=True):
+    """
+    Get the occurrence of different motifs by scanning each read in the input sequence,
+    keeping only the occurrences with Hamming distance less than max_ham_dist for each motif.
+    
+    Args:
+        seq_np_arr: input dna sequence in numpy array format
+        conseq_list: consensus sequence list, consensus length can be different
+        motif_def_dict: motif definition dictionary, kmer_len : MotifDef obj
+        revcom_mode: if reverse complement should be considered
+
+    Returns:
+        tuple: (motif_flag, motif_locations)
+        - motif_flag: boolean indicating if any motif has been found
+        - motif_locations: string of motif locations, semicolon-separated for each consensus
+    """
+    motif_locations = []
+    motif_flag = False
+    
+    for i, conseq in enumerate(conseq_list):
+        kmer_len = len(conseq)
+        max_ham_dist = motif_def_dict[kmer_len].max_ham_dist
+        conseq_kh = kmer2hash(conseq)
+        rc_conseq_kh = revcom_hash(conseq_kh, kmer_len)
+        hash_arr = comp_kmer_hash_taichi(seq_np_arr, kmer_len)
+        
+        # Calculate Hamming distances for forward and reverse complement
+        dist_arr = cal_hamming_dist(hash_arr, conseq_kh, kmer_len)
+        if revcom_mode:
+            rc_dist_arr = cal_hamming_dist(hash_arr, rc_conseq_kh, kmer_len)
+            # Take the minimum distance between forward and reverse complement
+            dist_arr = np.minimum(dist_arr, rc_dist_arr)
+        
+        # Find locations of motifs with Hamming distance less than max_ham_dist
+        motif_locs = np.where(dist_arr <= max_ham_dist)[0]
+
+        if len(motif_locs) == 0:
+            motif_locations.append("")
             continue
 
-        tmpinds = np.where(tmp_motif_flag_arr)[0]
-        motif_rel_pos_arr = tmpinds / (en - st - kmer_len + 1)
-        density += sum(norm(xi, scale=x_step).pdf(x_arr) for xi in motif_rel_pos_arr) / len(motif_rel_pos_arr)
+        # only keep locations with the minimum hamming distance
+        min_dist = np.min(dist_arr[motif_locs])
+        motif_locs = motif_locs[dist_arr[motif_locs] == min_dist]
+        # randomly sample 20 locations if there are more then 20 occurences
+        if len(motif_locs) > 20:
+            indices = np.random.choice(len(motif_locs), 20, replace=False)
+            motif_locs = np.sort(motif_locs[indices])
 
-        n_motif_seq += 1
-        n_motif_occurrence += len(tmpinds)
+        motif_flag = True
+        loc_str = ",".join(map(str, motif_locs))
+        motif_locations.append(loc_str)
 
-    if debug:
-        print(f"conseq={conseq} {n_motif_seq=} {n_motif_occurrence=} "
-              f"n_all_seq={len(boarder_mat)}")
-
-    return n_motif_seq, n_motif_occurrence, density
+    motif_locations_str = ";".join(motif_locations)
+    
+    return motif_flag, motif_locations_str
 
 
 

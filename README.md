@@ -99,13 +99,14 @@ test
   | -- input.seqboarder.bin.pkl
   | -- config.toml
   | -- motif_def_table.csv
-  | -- kmer_count[folder]: kmer counts of different kmer lengths
+  | -- kmer_count[folder]: kmer counts of different kmer lengths, motif occurence file for candidate consensus sequences
   | -- candidate_conseq.csv: consensus sequences of significant Hamming balls of diferent kmer length
   | -- final_conseq.txt: merged consensus seqences of different kmer lengths, final motifs (2 motif in this case)
   | -- final_conseq.info.csv: contain meta information of final consensensus sequences
+  | -- final.motif_occurence.csv: positions of final conseqs in the input reads 
+  | -- conseq_similarity[folder]: files illustrate similarities between final conseqs
   | -- hamming_balls[folder]: Count matrix (calculated from Hamming balls) and logos of final motifs
-  | -- co_occurence_mat.tsv: co-occurence matrix of final motifs
-  | -- co_occurence_mat.norm.tsv: normalized co-occurence matrix of final motifs
+  | -- co_occurence[folder]: files about co-occurence of final conseqs, e.g., co-occurence frequency, distance distribution between different conseqs
   | -- motif_pos_density[folder]: motif kmer postion distribution on input sequences
   | -- motif_pos_density.np.pkl: numpy array of the position densities
   | -- sample_kmers.pkl: sampled kmers for visualization
@@ -145,6 +146,28 @@ kmap ex_hamball --res_dir ./test --conseq GTACGTAGGTCCTA --return_type matrix --
 kmap draw_logo --cnt_mat_numpy_file ./test/hamming_balls/GTACGTAGGTCCTA_cntmat.csv --output_fig_file ./test/hamming_balls/logo.pdf
 ```
 The motif logo for this consensus sequence is given by `./test/hamming_balls/logo.pdf`
+
+It take efforts to compare the consensus sequences, especially when reverse complements are considered.
+We can check the similarities between candidate consensus sequences using the following command.
+```bash
+kmap align_conseq --conseq_csv_file ./test/candidate_conseq.csv --out_dir ./test/candidate_seq_similarity
+# or only final conseqs
+kmap align_conseq --conseq_csv_file ./test/ final_conseq.info.csv --out_dir ./test/conseq_similarity
+```
+A dendrogram file `dendrogram.pdf` will be generated in the output directory `./test/candidate_seq_similarity`. 
+The dendrogram shows the similarities between all candidate consensus sequences, as well as their reverse complements.
+Hierarchical clustering is performed on the dendrogram. For each derived cluster, local pairwise alignment is generated
+for each pair of consensus sequences in that cluster.
+
+In Chip-seq data, we generally have the peak bed files, then we extract the corresponding fasta file from these peaks
+and perform kmap analysis. After that, we would like to know the actual locations of detected motifs on the reference genome.
+We could use the following command:
+```bash
+cd ./test # change to the result directory
+kmap extract_motif_locations --bed_file your_bed_file.bed 
+```
+A new folder `motif_locations` will be generated in the result directory, which contains the actual genomic location of
+detected final motifs.
 
 [comment]: <> (Release commands)
 [comment]: <> (python -m build) 
