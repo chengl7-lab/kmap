@@ -357,7 +357,7 @@ def plot_2d_data(ld_data: np.ndarray, label_arr: np.ndarray=None, conseq_list: L
         conseq_list = [f"motif-{i}" for i in range(max_label)]
     else:
         assert len(conseq_list) == max_label
-        conseq_list = [f"{conseq_list[i]}" for i in range(max_label)]
+        conseq_list = [f"m{i}-{conseq_list[i]}" for i in range(max_label)]
 
     ax.scatter(x_arr[random_kmer_inds], y_arr[random_kmer_inds],
                 s=point_size, c=point_color, alpha=point_alpha)
