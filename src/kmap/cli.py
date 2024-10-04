@@ -2,8 +2,10 @@ import click
 from .kmer_count import preproc
 from .motif_discovery import  scan_motif, ex_hamball, draw_logo
 from .visualization import visualize_kmers
-from .util import align_conseq, extract_motif_locations
+from .util import align_conseq, extract_motif_locations, plot_cooccurrence_network
 import importlib.metadata
+from pathlib import Path
+
 @click.group()
 def cli():
     """
@@ -31,3 +33,15 @@ cli.add_command(draw_logo)
 cli.add_command(visualize_kmers)
 cli.add_command(align_conseq)
 cli.add_command(extract_motif_locations)
+
+# The plot_network command has been removed
+
+@cli.command()
+@click.option('--res_dir', default='./test/', help='Path to result directory')
+@click.option('--cutoff', default=0.7, help='Co-occurrence frequency cutoff')
+@click.option('--output-file', default='cooccurrence_network.png', help='Output file name for the network plot')
+def plot_network(res_dir, cutoff, output_file):
+    """Plot co-occurrence network from matrix files."""
+    co_occur_file = Path(res_dir) / "co_occurence/co_occurence_mat.norm.tsv"
+    dist_file = Path(res_dir) / "co_occurence/co_occurence_motif_dist_mat.tsv"
+    plot_cooccurrence_network(co_occur_file, dist_file, co_occur_cutoff=cutoff, output_file=output_file)

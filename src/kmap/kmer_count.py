@@ -39,6 +39,7 @@ FileNameDict = {
     "co_occur_dist_data_file": "co_occurence_motif_dist_data.txt",
     "co_occur_mat_file": "co_occurence_mat.tsv",
     "co_occur_mat_norm_file": "co_occurence_mat.norm.tsv",
+    "co_occur_network_fig": "co_occur_network.pdf",
     "motif_occurence_file": "final.motif_occurence.csv",
     "hamball_dir": "hamming_balls",
     "candidate_conseq_file": "candidate_conseq.csv",

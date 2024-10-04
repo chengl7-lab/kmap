@@ -48,6 +48,7 @@ dependencies:
   - matplotlib=3.8.0=py311hca03da5_0
   - matplotlib-base=3.8.0=py311h7aedaa7_0
   - ncurses=6.4=h313beb8_0
+  - networkx=3.3=pyhd8ed1ab_1
   - numexpr=2.8.7=py311h6dc990b_0
   - numpy=1.26.0=py311he598dae_0
   - numpy-base=1.26.0=py311hfbfe69c_0

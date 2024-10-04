@@ -15,6 +15,7 @@ noise_kmer_file = "None" # Can be set to user defined file, each line is a noise
 save_kmer_cnt_flag = true # if intermediate kmer count result should be saved
 motif_pos_density_flag = true # if motif postion distribution will be produced
 motif_co_occurence_flag = true # if motif co-occurence information will be produced
+co_occur_cutoff = 0.7 # cutoff for drawing an edge in the co-occurence network
 top_k = 5 # top 5 consensus sequences will be checked
 n_trial = 10 # try to find maximumly n_trial motifs from the data
 sample_kmer_flag = true # if kmers will be sampled for visualization

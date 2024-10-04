@@ -24,7 +24,8 @@ dependencies = [
     "taichi >= 1.5.0",
     "biopython >= 1.78",
     "tomli-w >= 1.0.0",
-    "logomaker >= 0.8"
+    "logomaker >= 0.8",
+    "networkx >= 3.3",
 ]
 
 [build-system]

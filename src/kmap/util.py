@@ -7,6 +7,13 @@ from pathlib import Path
 import matplotlib.colors  # Added import for rgb2hex function
 import click
 from operator import itemgetter
+import networkx as nx
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
+from Bio import SeqIO
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
+import re
 
 
 # Main process
@@ -339,6 +346,81 @@ def _extract_motif_locations(bed_file: str, conseq_file: str, motif_occurrence_f
         )
 
     print(f"Motif location extraction complete. Results saved in {output_path}")
+
+
+def plot_cooccurrence_network(co_occur_file, dist_file, co_occur_cutoff=0.7, output_file='cooccurrence_network.pdf'):
+    # Read the TSV files
+    df_co_occur = pd.read_csv(co_occur_file, sep='\t', index_col=0)
+    df_dist = pd.read_csv(dist_file, sep='\t', index_col=0)
+
+    # Create a graph
+    G = nx.Graph()
+
+    # Add nodes using column names
+    for node in df_co_occur.columns:
+        G.add_node(node)
+
+    # Add edges using the upper triangle of the matrix
+    for i, col in enumerate(df_co_occur.columns):
+        for j, row in enumerate(df_co_occur.columns[i+1:], start=i+1):
+            co_occur_value = df_co_occur.iloc[i, j]
+            dist_value = df_dist.iloc[i, j]
+            if co_occur_value > co_occur_cutoff:
+                G.add_edge(col, row, weight=co_occur_value, distance=dist_value)
+
+    # Set up the plot
+    fig, ax = plt.subplots(figsize=(14, 10))
+    
+    # Calculate node sizes based on degree
+    node_sizes = [300 * (1 + G.degree(node)) for node in G.nodes()]
+
+    # Draw the network
+    pos = nx.spring_layout(G, k=0.5, iterations=50)
+    
+    # Adjust positions to bring disconnected nodes closer
+    max_x = max(coord[0] for coord in pos.values())
+    max_y = max(coord[1] for coord in pos.values())
+    for node, coords in pos.items():
+        if G.degree(node) == 0:
+            pos[node] = (0.5 * max_x * (0.8 + 0.4 * np.random.random()),
+                         0.5 * max_y * (0.8 + 0.4 * np.random.random()))
+
+    nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color='lightblue', ax=ax)
+    nx.draw_networkx_labels(G, pos, font_size=8, ax=ax)
+    
+    # Draw edges with uniform width but varying colors
+    edge_weights = [G[u][v]['weight'] for u, v in G.edges()]
+    uniform_width = 2  # You can adjust this value to change the edge thickness
+    
+    # Create a colormap
+    cmap = plt.cm.viridis
+    norm = Normalize(vmin=co_occur_cutoff, vmax=max(edge_weights) if edge_weights else 1)
+    
+    # Draw edges with color mapping
+    if G.edges():
+        edges = nx.draw_networkx_edges(G, pos, width=uniform_width, edge_color=edge_weights, 
+                                       edge_cmap=cmap, edge_vmin=co_occur_cutoff, 
+                                       edge_vmax=max(edge_weights), ax=ax)
+
+        # Add edge labels (distances)
+        edge_labels = nx.get_edge_attributes(G, 'distance')
+        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=6)
+
+        # Add colorbar
+        sm = ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
+        cbar = plt.colorbar(sm, ax=ax, label='Co-occurrence Frequency', 
+                            orientation='horizontal', pad=0.08, aspect=30)
+
+    plt.title(f"Co-occurrence Network (cutoff: {co_occur_cutoff})")
+    ax.axis('off')
+    
+    # Save the plot
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close()
+
+    print(f"Network plot saved as {output_file}")
 
 
 if __name__ == "__main__":

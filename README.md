@@ -15,6 +15,7 @@ conda install anaconda::click
 conda install anaconda::tomli-w
 conda install anaconda::requests
 conda install conda-forge::biopython
+conda install conda-forge::networkxx
 conda install bioconda::logomaker
 pip install taichi
 pip install kmer-map

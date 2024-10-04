@@ -6,7 +6,7 @@ from .kmer_count import (comp_kmer_hash_taichi, count_uniq_hash, merge_revcom,
                                  cal_hamming_dist_head, cal_hamming_dist_tail, dna2arr,
                                  reverse_complement, get_hash_dtype, FileNameDict,
                                  gen_motif_def_dict, get_invalid_hash, remove_duplicate_hash_per_seq)
-from .util import _align_conseq
+from .util import _align_conseq, plot_cooccurrence_network
 
 import numpy as np
 import pickle
@@ -314,6 +314,8 @@ def _scan_motif(res_dir: str, debug=False):
         co_occur_mat_norm_file = co_occur_dir /  FileNameDict["co_occur_mat_norm_file"]
         co_occur_distmat_file = co_occur_dir / FileNameDict["co_occur_dist_mat_file"]
         co_occur_dist_data_file = co_occur_dir / FileNameDict["co_occur_dist_data_file"]
+        co_occur_network_cutoff = config_dict["motif_discovery"]["co_occur_cutoff"]
+        co_occur_network_fig_file = co_occur_dir / FileNameDict["co_occur_network_fig"]
         if co_occur_mat_file.exists():
             print(f"{co_occur_mat_file}, re-use it!")
         else:
@@ -325,6 +327,9 @@ def _scan_motif(res_dir: str, debug=False):
             write_co_occurence_mat(co_occur_distmat_file, loc_dist_mat, final_conseq_list)
             write_co_occurence_dist_arr(co_occur_dist_data_file, loc_dist_dict, final_conseq_list)
             draw_motif_distance_distribution(co_occur_dir, loc_dist_dict, final_conseq_list)
+            plot_cooccurrence_network(co_occur_mat_norm_file, co_occur_distmat_file,
+                                      co_occur_cutoff=co_occur_network_cutoff,
+                                      output_file=co_occur_network_fig_file)
         print("motif co-occurence matrix generated.")
 
     # sample kmers
