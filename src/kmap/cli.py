@@ -3,7 +3,7 @@ from .kmer_count import preproc
 from .motif_discovery import  scan_motif, ex_hamball, draw_logo
 from .visualization import visualize_kmers
 from .util import align_conseq, extract_motif_locations
-
+import importlib.metadata
 @click.group()
 def cli():
     """
@@ -11,7 +11,10 @@ def cli():
     """
     pass
 
+
 def display_paper_info():
+    print()
+    print(f"KMAP version: {importlib.metadata.version('kmer-map')}")
     print()
     print("Citation")
     print("KMAP: Kmer Manifold Approximation and Projection for visualizing DNA sequences")

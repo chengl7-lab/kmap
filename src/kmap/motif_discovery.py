@@ -247,11 +247,19 @@ def _scan_motif(res_dir: str, debug=False):
             final_conseq_list = fh.read().splitlines()
         with open(candidate_conseq_file, "r") as fh:
             candidate_conseq_info_list = fh.read().splitlines()
-        final_conseq_info_list = [candidate_conseq_info_list[0]] # header
+        elements = candidate_conseq_info_list[0].split(",")
+        elements[1] = elements[0]
+        elements[0] = "motif_id"
+        final_conseq_info_list = [",".join(elements)] # header
+        motif_ind = 0
         for conseq in final_conseq_list:
             for line in candidate_conseq_info_list:
                 if ","+conseq+"," in line:
-                    final_conseq_info_list.append(line)
+                    elements = line.split(",")
+                    elements[1] = elements[0]
+                    elements[0] = str(motif_ind)
+                    motif_ind += 1
+                    final_conseq_info_list.append(",".join(elements))
                     continue
         write_lines(final_conseq_info_list, final_conseq_info_file)
         print("Final consensus sequences generated.")
@@ -1187,10 +1195,12 @@ def gen_motif_occurence_file(conseq_list: List[str], motif_def_dict: dict,
         out_file.write("seq_ind;" + tmp_header + ";seq_len\n")
         for i, record in enumerate(SeqIO.parse(str(input_fasta_file), "fasta")):
             seq_np_arr = dna2arr(str(record.seq).upper(), append_missing_val_flag=False)
+            #print(f"{i=} seq_len={len(record.seq)} seq_np_arr_len={len(seq_np_arr)}")
             motif_flag, motif_locations_str = get_motif_occurence(seq_np_arr, conseq_list, motif_def_dict, revcom_mode)
             if not motif_flag:
                 continue
             out_file.write(f"{i};{motif_locations_str};{len(seq_np_arr)}\n")
+        #print("the end\n")
 
 
 def get_motif_occurence(seq_np_arr: np.ndarray, conseq_list: List[str], motif_def_dict: dict, revcom_mode=True):
@@ -1218,6 +1228,7 @@ def get_motif_occurence(seq_np_arr: np.ndarray, conseq_list: List[str], motif_de
         conseq_kh = kmer2hash(conseq)
         rc_conseq_kh = revcom_hash(conseq_kh, kmer_len)
         hash_arr = comp_kmer_hash_taichi(seq_np_arr, kmer_len)
+        hash_arr = hash_arr[0:(len(seq_np_arr) - kmer_len + 1)]
         
         # Calculate Hamming distances for forward and reverse complement
         dist_arr = cal_hamming_dist(hash_arr, conseq_kh, kmer_len)
