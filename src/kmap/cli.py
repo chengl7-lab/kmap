@@ -1,6 +1,6 @@
 import click
 from .kmer_count import preproc
-from .motif_discovery import  scan_motif, ex_hamball, draw_logo
+from .motif_discovery import  scan_motif, ex_hamball, draw_logo, check_motif_co_occurence
 from .visualization import visualize_kmers
 from .util import align_conseq, extract_motif_locations, plot_cooccurrence_network
 import importlib.metadata
@@ -33,6 +33,7 @@ cli.add_command(draw_logo)
 cli.add_command(visualize_kmers)
 cli.add_command(align_conseq)
 cli.add_command(extract_motif_locations)
+cli.add_command(check_motif_co_occurence)
 
 # The plot_network command has been removed
 

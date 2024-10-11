@@ -10,10 +10,14 @@ from operator import itemgetter
 import networkx as nx
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
+import csv
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 import re
+from scipy.stats import gaussian_kde
+from typing import List
+from .kmer_count import reverse_complement  # Add this import
 
 
 # Main process
@@ -366,7 +370,7 @@ def plot_cooccurrence_network(co_occur_file, dist_file, co_occur_cutoff=0.7, out
             co_occur_value = df_co_occur.iloc[i, j]
             dist_value = df_dist.iloc[i, j]
             if co_occur_value > co_occur_cutoff:
-                G.add_edge(col, row, weight=co_occur_value, distance=dist_value)
+                G.add_edge(col, row, weight=dist_value, distance=co_occur_value)
 
     # Set up the plot
     fig, ax = plt.subplots(figsize=(14, 10))
@@ -402,17 +406,17 @@ def plot_cooccurrence_network(co_occur_file, dist_file, co_occur_cutoff=0.7, out
                                        edge_cmap=cmap, edge_vmin=co_occur_cutoff, 
                                        edge_vmax=max(edge_weights), ax=ax)
 
-        # Add edge labels (distances)
+        # Add edge labels (co-occur-freq)
         edge_labels = nx.get_edge_attributes(G, 'distance')
-        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=6)
+        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=10)
 
         # Add colorbar
         sm = ScalarMappable(cmap=cmap, norm=norm)
         sm.set_array([])
-        cbar = plt.colorbar(sm, ax=ax, label='Co-occurrence Frequency', 
+        cbar = plt.colorbar(sm, ax=ax, label='Motif distance (median)',
                             orientation='horizontal', pad=0.08, aspect=30)
 
-    plt.title(f"Co-occurrence Network (cutoff: {co_occur_cutoff})")
+    plt.title(f"Co-occurrence Network (freq cutoff: {co_occur_cutoff})")
     ax.axis('off')
     
     # Save the plot
@@ -421,6 +425,116 @@ def plot_cooccurrence_network(co_occur_file, dist_file, co_occur_cutoff=0.7, out
     plt.close()
 
     print(f"Network plot saved as {output_file}")
+
+
+def plot_co_occur_motif_locations(occurence_file_path: Path, motif_index1: int, motif_index2: int, 
+                                  output_file: Path, conseq_list: List[str], noise_std: float = 2,
+                                  relative_position_mode: bool = False, info_str=""):
+    x_positions = []
+    y_positions = []
+    max_seq_len = 0
+
+    with open(occurence_file_path, 'r', newline='') as csvfile:
+        csv_reader = csv.reader(csvfile, delimiter=';')
+        next(csv_reader)  # Skip header row
+
+        for row in csv_reader:
+            pos1 = row[motif_index1 + 1].strip()
+            pos2 = row[motif_index2 + 1].strip()
+            seq_len = int(row[-1].strip())
+            max_seq_len = max(max_seq_len, seq_len)
+
+            if pos1 and pos2:  # Both motifs are present
+                x_pos = random_position(pos1) - seq_len/2
+                y_pos = random_position(pos2) - seq_len/2
+            
+                # Add Gaussian noise
+                x_pos += np.random.normal(0, noise_std)
+                y_pos += np.random.normal(0, noise_std)
+                
+                if relative_position_mode:
+                    x_pos /= seq_len
+                    y_pos /= seq_len
+
+                x_positions.append(x_pos)
+                y_positions.append(y_pos)
+
+    # Create the plot
+    plt.figure(figsize=(12, 10))
+    
+    # Calculate 2D density
+    xy = np.vstack([x_positions, y_positions])
+    kde = gaussian_kde(xy)
+    
+    # Create a grid for contour plot
+    x_range = np.linspace(min(x_positions), max(x_positions), 100)
+    y_range = np.linspace(min(y_positions), max(y_positions), 100)
+    X, Y = np.meshgrid(x_range, y_range)
+    positions = np.vstack([X.ravel(), Y.ravel()])
+    Z = kde(positions).reshape(X.shape)
+    
+    # Create a scatter plot colored by density with smaller dots
+    scatter = plt.scatter(x_positions, y_positions, c=kde(xy), s=25, alpha=0.5, cmap='viridis')
+    
+    # Add colored contour lines with transparency
+    contourf = plt.contourf(X, Y, Z, levels=20, cmap='viridis', alpha=0.3)
+    
+    # Add solid contour lines without labels
+    contour = plt.contour(X, Y, Z, levels=10, colors='k', linewidths=0.5)
+
+    plt.colorbar(scatter, label='Density')
+
+    motif1 = conseq_list[motif_index1]
+    motif2 = conseq_list[motif_index2]
+    rc_motif1 = reverse_complement(motif1)
+    rc_motif2 = reverse_complement(motif2)
+
+    position_type = "Relative position" if relative_position_mode else "Position"
+    plt.xlabel(f"{position_type} of motif {motif_index1}: {motif1} (RC: {rc_motif1})")
+    plt.ylabel(f"{position_type} of motif {motif_index2}: {motif2} (RC: {rc_motif2})")
+    plt.title(f"Co-occurrence of motifs {motif_index1} and {motif_index2} {info_str}")
+    
+    if relative_position_mode:
+        max_abs_val = max(abs(min(x_positions + y_positions)), abs(max(x_positions + y_positions)))
+        plt.xlim(-max_abs_val, max_abs_val)
+        plt.ylim(-max_abs_val, max_abs_val)
+        tick_interval = 0.1
+        ticks = np.arange(-np.ceil(max_abs_val*10)/10, np.ceil(max_abs_val*10)/10 + tick_interval, tick_interval)
+    else:
+        max_abs_val = max(abs(min(x_positions + y_positions)), abs(max(x_positions + y_positions)))
+        plt.xlim(-max_abs_val, max_abs_val)
+        plt.ylim(-max_abs_val, max_abs_val)
+        tick_interval = 10
+        ticks = np.arange(-np.ceil(max_abs_val/10)*10, np.ceil(max_abs_val/10)*10 + tick_interval, tick_interval)
+    
+    plt.xticks(ticks, fontsize=8, rotation=60, ha='right')
+    plt.yticks(ticks, fontsize=8)
+    
+    # Add diagonal line
+    plt.plot([-max_abs_val, max_abs_val], [-max_abs_val, max_abs_val], 'r--', alpha=0.5)
+    
+    # Add horizontal and vertical lines at 0
+    plt.axhline(y=0, color='k', linestyle='--', linewidth=0.5, alpha=0.5)
+    plt.axvline(x=0, color='k', linestyle='--', linewidth=0.5, alpha=0.5)
+    
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300)
+    plt.close()
+
+def random_position(pos_string: str) -> int:
+    """
+    Randomly select a position from a comma-separated string of positions.
+
+    Args:
+        pos_string (str): Comma-separated string of positions.
+
+    Returns:
+        int: Randomly selected position.
+    """
+    positions = [int(pos) for pos in pos_string.split(',')]
+    return np.random.choice(positions)
+
+
 
 
 if __name__ == "__main__":

@@ -371,7 +371,7 @@ def plot_2d_data(ld_data: np.ndarray, label_arr: np.ndarray=None, conseq_list: L
         plt.savefig(output_fig_file_stem + ".png", format="png")
         plt.savefig(output_fig_file_stem + ".pdf", format="pdf")
 
-    plt.show()
+    #plt.show()
 
 
 

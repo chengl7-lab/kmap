@@ -5,8 +5,8 @@ from .kmer_count import (comp_kmer_hash_taichi, count_uniq_hash, merge_revcom,
                                  init_motif_def_dict, mask_ham_ball, hash2kmer, kmer2hash,
                                  cal_hamming_dist_head, cal_hamming_dist_tail, dna2arr,
                                  reverse_complement, get_hash_dtype, FileNameDict,
-                                 gen_motif_def_dict, get_invalid_hash, remove_duplicate_hash_per_seq)
-from .util import _align_conseq, plot_cooccurrence_network
+                                 gen_motif_def_dict, get_invalid_hash, remove_duplicate_hash_per_seq, MotifDef)
+from .util import _align_conseq, plot_cooccurrence_network, plot_co_occur_motif_locations
 
 import numpy as np
 import pickle
@@ -23,6 +23,7 @@ import tomllib
 import logomaker
 import pandas as pd
 import click
+from importlib.resources import files, as_file
 
 
 @click.command(name="scan_motif")
@@ -105,6 +106,76 @@ def draw_logo(cnt_mat_numpy_file: str, output_fig_file=None):
 def ex_hamball(res_dir: str, conseq: str, return_type: str, output_file: str,
                max_ham_dist: int=-1):
     _ex_hamball(res_dir, conseq, return_type, output_file, max_ham_dist)
+
+
+@click.command(name="check_motif_co_occurence")
+@click.option(
+    '--input_fasta_file',
+    type=str,
+    help='Input FASTA file',
+    required=True
+    )
+@click.option(
+    '--motif1',
+    type=str,
+    help='First motif sequence',
+    required=True
+    )
+@click.option(
+    '--motif2',
+    type=str,
+    help='Second motif sequence',
+    required=True
+    )
+@click.option(
+    '--max_ham_dist1',
+    type=int,
+    help='Maximum Hamming distance for first motif',
+    required=True
+    )
+@click.option(
+    '--max_ham_dist2',
+    type=int,
+    help='Maximum Hamming distance for second motif',
+    required=True
+    )
+@click.option(
+    '--output_dir',
+    type=str,
+    help='Output directory',
+    required=True
+    )
+@click.option(
+    '--revcom_mode',
+    type=bool,
+    default=True,
+    help='Consider reverse complements',
+    required=False
+    )
+def check_motif_co_occurence(input_fasta_file: str, motif1: str, motif2: str, max_ham_dist1: int, max_ham_dist2: int, output_dir: str, revcom_mode: bool):
+    input_fasta_path = Path(input_fasta_file)
+    assert input_fasta_path.exists()
+
+    output_dir_path = Path(output_dir)
+    if not output_dir_path.exists():
+        output_dir_path.mkdir(parents=True)
+
+    conseq_list = [motif1, motif2]
+    max_hamdist_list = [max_ham_dist1, max_ham_dist2]
+    occurence_file = output_dir_path / "user_motif_occurence.csv"
+
+    get_user_motif_occurence_file(input_fasta_path, conseq_list, max_hamdist_list, occurence_file, revcom_mode)
+
+    co_occur_mat, loc_dist_mat, loc_dist_dict = get_motif_co_occurence_mat(occurence_file, len(conseq_list))
+    info_str = ""
+    if np.any(co_occur_mat):
+        co_occur_freq = co_occur_mat[0][1] * 2 / (co_occur_mat[0][0] + co_occur_mat[1][1])
+        info_str = f"co_occur_freq={co_occur_freq*100:.2f}%"
+        draw_motif_distance_distribution(output_dir_path, loc_dist_dict, conseq_list)
+
+    co_occur_plot_file = output_dir_path / f"co_occur_plot_m0_m1.pdf"
+    plot_co_occur_motif_locations(occurence_file, 0, 1, co_occur_plot_file, conseq_list, info_str=info_str)
+
 
 
 def write_lines(str_list: List, outfile: str|Path):
@@ -330,12 +401,27 @@ def _scan_motif(res_dir: str, debug=False):
             plot_cooccurrence_network(co_occur_mat_norm_file, co_occur_distmat_file,
                                       co_occur_cutoff=co_occur_network_cutoff,
                                       output_file=co_occur_network_fig_file)
+        
+            for i in range(len(final_conseq_list)):
+                for j in range(i+1, len(final_conseq_list)):
+                    plot_co_occur_motif_locations(
+                        occurence_file,
+                        i, j,
+                        co_occur_dir / f"co_occur_plot_m{i}_m{j}.pdf",
+                        final_conseq_list,
+                        info_str=f"co_occur_freq={co_occur_norm_mat[i][j]:.2f}"
+                    )
+
         print("motif co-occurence matrix generated.")
 
     # sample kmers
     if config_dict["motif_discovery"]["sample_kmer_flag"] and not save_kmer_cnt_flag:
         print(f"kmers cannot be sampled when {save_kmer_cnt_flag=}, skip kmer sampling!")
-    if config_dict["motif_discovery"]["sample_kmer_flag"] and save_kmer_cnt_flag:
+    sample_kmer_pkl_file = Path(res_dir) / FileNameDict["sample_kmer_pkl_file"]
+    sample_kmer_txt_file = Path(res_dir) / FileNameDict["sample_kmer_txt_file"]
+    if sample_kmer_pkl_file.exists():
+        print(f"sample kmer file {sample_kmer_pkl_file} exists, skip sampling!")
+    elif config_dict["motif_discovery"]["sample_kmer_flag"] and save_kmer_cnt_flag:
         n_total_sample = config_dict["motif_discovery"]["n_total_sample"]
         n_motif_sample = config_dict["motif_discovery"]["n_motif_sample"]
         kmer_count_dir = Path(res_dir) / FileNameDict["kmer_count_dir"]
@@ -344,8 +430,7 @@ def _scan_motif(res_dir: str, debug=False):
             = sample_disp_kmer(final_conseq_list, kmer_len, motif_def_dict,
                 kmer_count_dir=kmer_count_dir, n_total_sample = n_total_sample,
                 n_motif_kmer = n_motif_sample, revcom_mode = revcom_mode)
-        sample_kmer_pkl_file = Path(res_dir) / FileNameDict["sample_kmer_pkl_file"]
-        sample_kmer_txt_file = Path(res_dir) / FileNameDict["sample_kmer_txt_file"]
+
         with open(sample_kmer_pkl_file, "wb") as fh:
             pickle.dump([samp_kh_arr, samp_cnts, samp_label_arr, conseq_list], fh)
         sample_kmer_lines = []
@@ -365,14 +450,17 @@ def _scan_motif(res_dir: str, debug=False):
         print(f"Hamming distance matrix of sampled kmers are generated.")
 
     if config_dict["motif_discovery"]["gen_hamball_flag"]:
+        out_dir_path = Path(res_dir) / FileNameDict["hamball_dir"]
+        if not out_dir_path.exists():
+            out_dir_path.mkdir()
         for i, conseq in enumerate(final_conseq_list):
             if debug:
                 print(f"generating motif count matrix and draw logo for motif {i}: {conseq}")
-            out_dir_path = Path(res_dir) / FileNameDict["hamball_dir"]
-            if not out_dir_path.exists():
-                out_dir_path.mkdir()
             return_type = "matrix"
             output_cntmat_file = str(out_dir_path / f"cntmat_motif{i}_{conseq}.csv")
+            if Path(output_cntmat_file).exists():
+                print(f"motif matrix file {output_cntmat_file} exist, skip generating.")
+                continue
             max_ham_dist = motif_def_dict[len(conseq)].max_ham_dist
             _ex_hamball(res_dir, conseq, return_type, output_cntmat_file, max_ham_dist=max_ham_dist)
             output_logo_file = str(out_dir_path / f"logo_motif{i}_{conseq}.pdf")
@@ -830,7 +918,8 @@ def ex_hamball_kh_arr(res_dir: str, conseq: str, max_ham_dist: int=-1, motif_def
     kmer_len = len(conseq)
     conseq_kh = kmer2hash(conseq)
     rc_conseq_kh = revcom_hash(conseq_kh, kmer_len)
-    assert conseq_kh <= rc_conseq_kh
+    if revcom_mode:
+        assert conseq_kh <= rc_conseq_kh
 
     assert Path(motif_def_file).exists()
     assert Path(res_dir).exists()
@@ -896,6 +985,15 @@ def _draw_motif_pos_density(title: str, x_arr: np.ndarray, y_arr: np.ndarray, ou
     plt.xlabel(f"relative motif position in sequence")
     plt.ylabel("density")
     plt.title(title)
+    
+    # Mark x-axis at 0, 0.1, 0.2, ..., 1.0
+    x_ticks = np.arange(0, 1.1, 0.1)
+    plt.xticks(x_ticks)
+    
+    # Add gray vertical dashed lines
+    for x in x_ticks:
+        plt.axvline(x, color='gray', linestyle='--', alpha=0.5)
+    
     if out_fig_path:
         plt.savefig(out_fig_path)
 
@@ -911,11 +1009,21 @@ def _draw_motif_pos_density_all(x_arr: np.ndarray, y_mat: np.ndarray, conseq_lis
     plt.ylabel("density")
     plt.legend(loc="upper left")
     plt.title(f"motif position distribution. n_all_seq={n_all_seq}")
+    
+    # Mark x-axis at 0, 0.1, 0.2, ..., 1.0
+    x_ticks = np.arange(0, 1.1, 0.1)
+    plt.xticks(x_ticks)
+    
+    # Add gray vertical dashed lines
+    for x in x_ticks:
+        plt.axvline(x, color='gray', linestyle='--', alpha=0.5)
+    
     if out_fig_path:
         plt.savefig(out_fig_path)
 
 
-def draw_motif_distance_distribution(output_dir: Path, dist_dict: dict, conseq_list: List[str]):
+def draw_motif_distance_distribution(output_dir: Path, dist_dict: dict, conseq_list: List[str],
+                                     bin_size=5, peak_num=5, x_tick_step=10, outfile_name=None):
     """
     draw the motif distance distribution
     Args:
@@ -926,25 +1034,90 @@ def draw_motif_distance_distribution(output_dir: Path, dist_dict: dict, conseq_l
     Returns:
         None
     """
+    from scipy.signal import find_peaks
     conseq_list = [f"m{i}_{s}_{reverse_complement(s)}" for i, s in enumerate(conseq_list)]
     for i, j in dist_dict:
         tmplist = dist_dict[(i, j)]
         if len(tmplist) == 0:
             continue
         plt.clf()
-        plt.figure(figsize=(16, 12))  # (width, height)
-        counts, bins, _ = plt.hist(tmplist, bins='auto', histtype='stepfilled', alpha=0.7)
-        plt.plot(tmplist, np.full_like(tmplist, -0.01), '|k', markeredgewidth=1)
-        kde = gaussian_kde(tmplist)
-        x_range = np.linspace(min(tmplist), max(tmplist), 100)
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 24), sharex=True)
+        
+        # Top panel: Absolute distance
+        abs_tmplist = [abs(x) for x in tmplist]
+        counts, bins, _ = ax1.hist(abs_tmplist, bins=range(0, int(max(abs_tmplist)) + bin_size + 1, bin_size), histtype='stepfilled', alpha=0.7)
+        ax1.plot(abs_tmplist, np.full_like(abs_tmplist, -0.01), '|k', markeredgewidth=1)
+        kde = gaussian_kde(abs_tmplist)
+        x_range = np.linspace(0, max(abs_tmplist), 1000)
         kde_values = kde(x_range)
         scaling_factor = np.max(counts) / np.max(kde_values)
-        plt.plot(x_range, kde_values * scaling_factor, 'r-', linewidth=2)
-        plt.title(conseq_list[i] + "-" + conseq_list[j])
-        plt.xlabel(f"distance between motifs m{i} and m{j}")
-        plt.ylabel("counts")
-        out_fig_path = output_dir / f"m{i}-m{j}.pdf"
+        ax1.plot(x_range, kde_values * scaling_factor, 'r-', linewidth=2)
+        
+        # Find peaks of the KDE curve for absolute distances
+
+        peaks, _ = find_peaks(kde_values, height=0.1*np.max(kde_values))
+        if len(peaks) > peak_num:
+            peaks = peaks[:peak_num]
+
+        # Mark and annotate peaks for absolute distances
+        for peak in peaks:
+            x_val = x_range[peak]
+            y_val = kde_values[peak] * scaling_factor
+            ax1.plot(x_val, y_val, 'bo', markersize=8)
+            ax1.annotate(f'{x_val:.0f}', (x_val, y_val), xytext=(0, 10), 
+                         textcoords='offset points', ha='center', va='bottom')
+        
+        ax1.set_title(f"Absolute distance between {conseq_list[i]} and {conseq_list[j]}")
+        ax1.set_xlabel("Absolute distance")
+        ax1.set_ylabel("Counts")
+        
+        # Bottom panel: Actual distance
+        counts, bins, _ = ax2.hist(tmplist, bins=range(int(min(tmplist)), int(max(tmplist)) + bin_size + 1, bin_size), histtype='stepfilled', alpha=0.7)
+        ax2.plot(tmplist, np.full_like(tmplist, -0.01), '|k', markeredgewidth=1)
+        kde = gaussian_kde(tmplist)
+        x_range = np.linspace(min(tmplist), max(tmplist), 1000)
+        kde_values = kde(x_range)
+        scaling_factor = np.max(counts) / np.max(kde_values)
+        ax2.plot(x_range, kde_values * scaling_factor, 'r-', linewidth=2)
+        
+        # Find peaks of the KDE curve for actual distances
+        peaks, _ = find_peaks(kde_values, height=0.1*np.max(kde_values))
+        if len(peaks) > peak_num:
+            peaks = peaks[:peak_num]
+
+        # Mark and annotate peaks for actual distances
+        for peak in peaks:
+            x_val = x_range[peak]
+            y_val = kde_values[peak] * scaling_factor
+            ax2.plot(x_val, y_val, 'bo', markersize=8)
+            ax2.annotate(f'{x_val:.0f}', (x_val, y_val), xytext=(0, 10), 
+                         textcoords='offset points', ha='center', va='bottom')
+        
+        ax2.set_title(f"Actual distance from {conseq_list[j]} to {conseq_list[i]}")
+        ax2.set_xlabel(f"Distance from m{j} to m{i}")
+        ax2.set_ylabel("Counts")
+        
+        # Set x-ticks with step of 10, but keep labels as before
+        x_min, x_max = ax2.get_xlim()
+        x_ticks = np.arange(np.ceil(x_min / x_tick_step) * x_tick_step, x_max, x_tick_step)
+        ax2.set_xticks(x_ticks)
+        
+        # Rotate x-tick labels by 60 degrees counter-clockwise
+        ax2.set_xticklabels(ax2.get_xticklabels(), rotation=60, ha='right')
+
+        # Add gray vertical dashed lines to both panels
+        for x in x_ticks:
+            ax1.axvline(x, color='gray', linestyle='--', alpha=0.5)
+            ax2.axvline(x, color='gray', linestyle='--', alpha=0.5)
+
+        plt.tight_layout()
+
+        if outfile_name is None:
+            out_fig_path = output_dir / f"m{i}-m{j}.pdf"
+        else:
+            out_fig_path = output_dir / outfile_name
         plt.savefig(out_fig_path)
+        plt.close()  # Close the figure to free up memory
 
 
 def write_co_occurence_dist_arr(output_file: Path, dist_dict, conseq_list: List[str]):
@@ -1017,7 +1190,7 @@ def get_motif_co_occurence_mat(occurence_file_path: Path, n_conseq: int):
     res_mat = np.zeros((n_conseq, n_conseq), dtype=int)
     dist_mat = np.zeros((n_conseq, n_conseq), dtype=float)
     individual_counts = np.zeros(n_conseq, dtype=int)
-    dist_dict = {(i,j):[] for i in range(n_conseq) for j in range(i+1,n_conseq)}
+    dist_dict = {(i,j):[] for i in range(n_conseq) for j in range(i+1, n_conseq)}
 
     with open(occurence_file_path, 'r', newline='') as csvfile:
         csv_reader = csv.reader(csvfile, delimiter=';')
@@ -1038,7 +1211,8 @@ def get_motif_co_occurence_mat(occurence_file_path: Path, n_conseq: int):
                     ii, jj = [motif_inds[i], motif_inds[j]]
                     res_mat[ii, jj] += 1
                     res_mat[jj, ii] += 1
-                    dist_dict[(ii,jj)].append(np.abs(tmp_pos_arr[ii] - tmp_pos_arr[jj]))
+                    #dist_dict[(ii,jj)].append(np.abs(tmp_pos_arr[ii] - tmp_pos_arr[jj]))
+                    dist_dict[(ii, jj)].append(tmp_pos_arr[jj] - tmp_pos_arr[ii]) # jj to ii distance
                     #dist_mat[ii, jj] += np.abs(tmp_pos_arr[ii] - tmp_pos_arr[jj])
                     #dist_mat[jj, ii] += np.abs(tmp_pos_arr[ii] - tmp_pos_arr[jj])
         # Set the diagonal elements using individual counts
@@ -1050,7 +1224,7 @@ def get_motif_co_occurence_mat(occurence_file_path: Path, n_conseq: int):
                     dist_mat[i, j] = 1e6
                     dist_mat[j, i] = dist_mat[i, j]
                 else:
-                    dist_mat[i, j] = np.median(dist_dict[(i, j)])
+                    dist_mat[i, j] = np.median(np.abs(dist_dict[(i, j)]))
                     dist_mat[j, i] = dist_mat[i, j]
 
         #dist_mat = dist_mat / res_mat
@@ -1266,6 +1440,34 @@ def get_motif_occurence(seq_np_arr: np.ndarray, conseq_list: List[str], motif_de
     return motif_flag, motif_locations_str
 
 
+def get_user_motif_occurence_file(input_fasta_file: Path,
+                        conseq_list: List[str],
+                        max_hamdist_list: List[int],
+                        output_file: str | Path,
+                        revcom_mode=True):
+    """
+    Get the occurrence of different motifs by scanning each read in the input sequence,
+    keeping only the occurrences with Hamming distance less than max_ham_dist for each motif.
+    """
+    assert input_fasta_file.exists()
+
+    motif_def_file_path = files(__package__).joinpath(FileNameDict["default_motif_def_file"])  # may be in a zip file
+    with as_file(motif_def_file_path) as fh:
+        motif_def_dict = init_motif_def_dict(fh)
+    for conseq, max_ham_dist in zip(conseq_list, max_hamdist_list):
+        motif_def_dict[len(conseq)].max_ham_dist = max_ham_dist
+
+    with open(output_file, 'w') as out_file:
+        tmp_header = ";".join([f"motif_{i}_{conseq_list[i]}" for i in range(len(conseq_list))])
+        out_file.write("seq_ind;" + tmp_header + ";seq_len\n")
+        for i, record in enumerate(SeqIO.parse(str(input_fasta_file), "fasta")):
+            seq_np_arr = dna2arr(str(record.seq).upper(), append_missing_val_flag=False)
+            # print(f"{i=} seq_len={len(record.seq)} seq_np_arr_len={len(seq_np_arr)}")
+            motif_flag, motif_locations_str = get_motif_occurence(seq_np_arr, conseq_list, motif_def_dict, revcom_mode)
+            if not motif_flag:
+                continue
+            out_file.write(f"{i};{motif_locations_str};{len(seq_np_arr)}\n")
+        # print("the end\n")
 
 
 

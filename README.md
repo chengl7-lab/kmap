@@ -170,6 +170,11 @@ kmap extract_motif_locations --bed_file your_bed_file.bed
 A new folder `motif_locations` will be generated in the result directory, which contains the actual genomic location of
 detected final motifs.
 
+When one want to check the co-occurence of two user defined motifs, one can use the following command:
+```commandline
+kmap check_motif_co_occurence --input_fasta_file ./tests/test.fa --motif1 GTACGTAGGTCCTA --motif2 AATCGATAGCGA --max_ham_dist1 6 --max_ham_dist2 5 --output_dir ./results
+```
+
 [comment]: <> (Release commands)
 [comment]: <> (python -m build) 
 [comment]: <> (python3 -m twine upload --repository kmer-map dist/*)
