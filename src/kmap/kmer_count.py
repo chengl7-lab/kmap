@@ -591,7 +591,11 @@ def mask_input(seq_np_arr: np.ndarray, kmer_len: int, consensus_kh_arr: np.ndarr
     """
     def _mask_one_hamball(seq_np_arr, kh_hash_arr, consensus_kh, max_hamball_dist, kmer_len):
         ham_dist_arr = cal_hamming_dist(kh_hash_arr, consensus_kh, kmer_len)
+        min_ham_dist = np.min(ham_dist_arr)
+        if min_ham_dist > max_hamball_dist:
+            return
         flag_arr = ham_dist_arr <= max_hamball_dist
+        #flag_arr = np.equal(ham_dist_arr, min_ham_dist)
         for i, flag in enumerate(flag_arr):
             if flag:
                 j = i + kmer_len if i + kmer_len < len(seq_np_arr) else len(seq_np_arr)
@@ -657,8 +661,8 @@ def merge_revcom(uniq_kmer_hash_arr: np.ndarray, uniq_kh_cnt_arr: np.ndarray,
     uniq_kh_cnt_arr[comm_kh_nat_inds] += uniq_kh_cnt_arr[comm_kh_rc_inds]
 
     # handle palindromes, only count once for palindrome
-    palindrome_inds = np.where(uniq_kmer_hash_arr == revcom_uniq_kmer_hash_arr)[0]
-    uniq_kh_cnt_arr[palindrome_inds] = uniq_kh_cnt_arr[palindrome_inds] / 2
+    #palindrome_inds = np.where(uniq_kmer_hash_arr == revcom_uniq_kmer_hash_arr)[0]
+    #uniq_kh_cnt_arr[palindrome_inds] = uniq_kh_cnt_arr[palindrome_inds] / 2
 
     # remove kmers that are revcom
     if keep_lower_hash_flag:

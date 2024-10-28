@@ -638,6 +638,10 @@ def find_motif(seq_np_arr, kmer_len: int, max_ham_dist, p_unif,
 
     for i_trial in range(n_trial):
         # get the kmer with maximum hamming ball counts
+        if top_k > len(uniq_kh_cnt_arr):
+            warnings.warn(f"There are only {len(uniq_kh_cnt_arr)} kmers, while top_k={top_k}. Set top_k={len(uniq_kh_cnt_arr)}")
+            assert len(uniq_kh_cnt_arr) > 0
+            top_k = len(uniq_kh_cnt_arr)
         top_k_inds = np.array(np.argpartition(uniq_kh_cnt_arr, -top_k)[-top_k:])
         if len(top_k_inds) == 0:
             break
@@ -1162,7 +1166,8 @@ def write_co_occurence_mat(output_file: Path, dist_mat: np.ndarray, conseq_list:
         header = ["RC"] + conseq_list
         fh.write("\t".join(header) + "\n")
         for i, arr in enumerate(dist_mat):
-            tmpstr = np.array2string(arr, formatter={'float_kind': lambda x: "%.2f" % x}).strip('[]').replace(' ', '\t')
+            arr = np.around(arr, decimals=2)
+            tmpstr = "\t".join([str(x) for x in arr])
             fh.write(rc_conseq_list[i] + "\t" + tmpstr + "\n")
 
 def get_motif_co_occurence_mat(occurence_file_path: Path, n_conseq: int):

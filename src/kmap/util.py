@@ -372,59 +372,76 @@ def plot_cooccurrence_network(co_occur_file, dist_file, co_occur_cutoff=0.7, out
             if co_occur_value > co_occur_cutoff:
                 G.add_edge(col, row, weight=dist_value, distance=co_occur_value)
 
-    # Set up the plot
-    fig, ax = plt.subplots(figsize=(14, 10))
+    # Identify connected components (modules)
+    modules = list(nx.connected_components(G))
     
-    # Calculate node sizes based on degree
-    node_sizes = [300 * (1 + G.degree(node)) for node in G.nodes()]
+    if len(modules) == 0:
+        print("Error: No edges in the graph. Try lowering the co-occurrence cutoff.")
+        return
 
-    # Draw the network
-    pos = nx.spring_layout(G, k=0.5, iterations=50)
-    
-    # Adjust positions to bring disconnected nodes closer
-    max_x = max(coord[0] for coord in pos.values())
-    max_y = max(coord[1] for coord in pos.values())
-    for node, coords in pos.items():
-        if G.degree(node) == 0:
-            pos[node] = (0.5 * max_x * (0.8 + 0.4 * np.random.random()),
-                         0.5 * max_y * (0.8 + 0.4 * np.random.random()))
+    # Plot each module separately
+    for idx, module in enumerate(modules):
+        subgraph = G.subgraph(module)
+        
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        # Calculate node sizes based on degree
+        node_sizes = [300 * (1 + subgraph.degree(node)) for node in subgraph.nodes()]
 
-    nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color='lightblue', ax=ax)
-    nx.draw_networkx_labels(G, pos, font_size=8, ax=ax)
-    
-    # Draw edges with uniform width but varying colors
-    edge_weights = [G[u][v]['weight'] for u, v in G.edges()]
-    uniform_width = 2  # You can adjust this value to change the edge thickness
-    
-    # Create a colormap
-    cmap = plt.cm.viridis
-    norm = Normalize(vmin=co_occur_cutoff, vmax=max(edge_weights) if edge_weights else 1)
-    
-    # Draw edges with color mapping
-    if G.edges():
-        edges = nx.draw_networkx_edges(G, pos, width=uniform_width, edge_color=edge_weights, 
-                                       edge_cmap=cmap, edge_vmin=co_occur_cutoff, 
-                                       edge_vmax=max(edge_weights), ax=ax)
+        # Draw the network
+        pos = nx.spring_layout(subgraph, k=0.5, iterations=50)
+        
+        nx.draw_networkx_nodes(subgraph, pos, node_size=node_sizes, node_color='lightblue', ax=ax)
+        nx.draw_networkx_labels(subgraph, pos, font_size=8, ax=ax)
+        
+        # Draw edges with uniform width but varying colors
+        edge_weights = [subgraph[u][v]['weight'] for u, v in subgraph.edges()]
+        edge_weights = [w for w in edge_weights if not np.isinf(w)]  # Remove inf values
+        
+        uniform_width = 2  # You can adjust this value to change the edge thickness
+        
+        if edge_weights:
+            cmap = plt.cm.viridis
+            norm = Normalize(vmin=min(edge_weights), vmax=max(edge_weights))
+            
+            edges = nx.draw_networkx_edges(subgraph, pos, width=uniform_width, edge_color=edge_weights, 
+                                           edge_cmap=cmap, edge_vmin=min(edge_weights), 
+                                           edge_vmax=max(edge_weights), ax=ax)
 
-        # Add edge labels (co-occur-freq)
-        edge_labels = nx.get_edge_attributes(G, 'distance')
-        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=10)
+            # Add edge labels (co-occur-freq)
+            edge_labels = nx.get_edge_attributes(subgraph, 'distance')
+            valid_edge_labels = {}
+            for (u, v), label in edge_labels.items():
+                if not np.array_equal(pos[u], pos[v]):
+                    valid_edge_labels[(u, v)] = f"{label:.2f}"
+            
+            if valid_edge_labels:
+                try:
+                    nx.draw_networkx_edge_labels(subgraph, pos, edge_labels=valid_edge_labels, font_size=8)
+                except Exception as e:
+                    print(f"Warning: Unable to draw edge labels. Error: {e}")
+            else:
+                print("Warning: No valid edge labels to draw.")
 
-        # Add colorbar
-        sm = ScalarMappable(cmap=cmap, norm=norm)
-        sm.set_array([])
-        cbar = plt.colorbar(sm, ax=ax, label='Motif distance (median)',
-                            orientation='horizontal', pad=0.08, aspect=30)
+            # Add colorbar
+            sm = ScalarMappable(cmap=cmap, norm=norm)
+            sm.set_array([])
+            cbar = plt.colorbar(sm, ax=ax, label='Motif distance (median)',
+                                orientation='horizontal', pad=0.08, aspect=30)
 
-    plt.title(f"Co-occurrence Network (freq cutoff: {co_occur_cutoff})")
-    ax.axis('off')
-    
-    # Save the plot
-    plt.tight_layout()
-    plt.savefig(output_file, dpi=300, bbox_inches='tight')
-    plt.close()
+        plt.title(f"Co-occurrence Network - Module {idx+1} (freq cutoff: {co_occur_cutoff:.2f})")
+        ax.axis('off')
+        
+        # Save the plot
+        output_path = Path(output_file)
+        module_output_file = output_path.with_name(f"{output_path.stem}_module_{idx+1}{output_path.suffix}")
+        plt.tight_layout()
+        plt.savefig(module_output_file, dpi=300, bbox_inches='tight')
+        plt.close()
 
-    print(f"Network plot saved as {output_file}")
+        print(f"Network plot for module {idx+1} saved as {module_output_file}")
+
+    print(f"Total number of modules: {len(modules)}")
 
 
 def plot_co_occur_motif_locations(occurence_file_path: Path, motif_index1: int, motif_index2: int, 
@@ -492,7 +509,7 @@ def plot_co_occur_motif_locations(occurence_file_path: Path, motif_index1: int, 
     position_type = "Relative position" if relative_position_mode else "Position"
     plt.xlabel(f"{position_type} of motif {motif_index1}: {motif1} (RC: {rc_motif1})")
     plt.ylabel(f"{position_type} of motif {motif_index2}: {motif2} (RC: {rc_motif2})")
-    plt.title(f"Co-occurrence of motifs {motif_index1} and {motif_index2} {info_str}")
+    plt.title(f"Co-occurrence of motifs {motif_index1} and {motif_index2} {info_str}. Origin is seq center.")
     
     if relative_position_mode:
         max_abs_val = max(abs(min(x_positions + y_positions)), abs(max(x_positions + y_positions)))
