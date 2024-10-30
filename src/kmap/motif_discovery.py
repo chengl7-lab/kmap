@@ -250,8 +250,15 @@ def _scan_motif(res_dir: str, debug=False):
         print(f"{candidate_conseq_file} already exist, re-use it.")
     else:
         # motif discovery
-        res = ["kmer_len,conseq_hash,conseq,conseq_rc,hamball_proportion,"
+        store_conseq_occur_info_flag = config_dict["motif_discovery"]["store_conseq_occur_info_flag"]
+
+        if store_conseq_occur_info_flag:
+            res = ["kmer_len,conseq_hash,conseq,conseq_rc,hamball_proportion,"
                "hamball_ratio,log10_p_value,n_motif_reads,n_all_reads,motif_reads_prop,motif_occurrence,motif_occurrence_per_motif_read"]
+        else:
+            res = ["kmer_len,conseq_hash,conseq,conseq_rc,hamball_proportion,"
+                   "hamball_ratio,log10_p_value"]
+
         for kmer_len in range(min_k, max_k + 1):
             seq_np_arr[:] = orig_seq_np_arr[:]
             p_uniform_k = motif_def_dict[kmer_len].p_uniform
@@ -275,17 +282,22 @@ def _scan_motif(res_dir: str, debug=False):
             if debug:
                 print(f"filtered consensus kmers when k = {kmer_len}")
 
-            # search all consensus sequences first and store intermediate results
             tmp_candidate_conseq_list = [hash2kmer(kh, kmer_len) for kh in consensus_kh_dict]
             input_fasta_file = Path(config_dict["general"]["input_fasta_file"])
-            tmp_occurence_file = Path(res_dir) / FileNameDict["kmer_count_dir"] / f"k{kmer_len}.motif_occurence.csv"
-            gen_motif_occurence_file(tmp_candidate_conseq_list, motif_def_dict, input_fasta_file, tmp_occurence_file, revcom_mode)
+
+            # search all consensus sequences first and store intermediate results
+            if store_conseq_occur_info_flag:
+                tmp_occurence_file = Path(res_dir) / FileNameDict["kmer_count_dir"] / f"k{kmer_len}.motif_occurence.csv"
+                gen_motif_occurence_file(tmp_candidate_conseq_list, motif_def_dict, input_fasta_file, tmp_occurence_file, revcom_mode)
             
             # generate information about consensus occurences
             for i, kmer_seq in enumerate(tmp_candidate_conseq_list):
                 kh = kmer2hash(kmer_seq)
                 prop, ratio, log10_p_value = consensus_kh_dict[kh]
-                n_motif_seq, n_motif_occurrence = get_motif_seq_num(tmp_occurence_file, i)
+                n_motif_seq, n_motif_occurrence = -n_all_seq, -n_all_seq
+                if store_conseq_occur_info_flag:
+                    n_motif_seq, n_motif_occurrence = get_motif_seq_num(tmp_occurence_file, i)
+
                 motif_seq_prop = float(n_motif_seq)/n_all_seq
                 motif_per_motif_seq = float(n_motif_occurrence)/n_motif_seq
                 if debug:
@@ -293,9 +305,13 @@ def _scan_motif(res_dir: str, debug=False):
                         f'{hash2kmer(kh, kmer_len)} perc={prop * 100:0.5f}% '
                         f' hamball_ratio={ratio} log10_p_value={log10_p_value}'
                         f' {n_motif_seq= } {n_motif_occurrence= } {n_all_seq= }')
-                res.append(f"{kmer_len},{kh},{kmer_seq},{reverse_complement(kmer_seq)},{prop:0.8f},"
+                if store_conseq_occur_info_flag:
+                    res.append(f"{kmer_len},{kh},{kmer_seq},{reverse_complement(kmer_seq)},{prop:0.8f},"
                            f"{ratio:0.4f},{log10_p_value:0.4f},{n_motif_seq},{n_all_seq},"
                            f"{motif_seq_prop:0.4f},{n_motif_occurrence},{motif_per_motif_seq:0.2f}")
+                else:
+                    res.append(f"{kmer_len},{kh},{kmer_seq},{reverse_complement(kmer_seq)},{prop:0.8f},"
+                               f"{ratio:0.4f},{log10_p_value:0.4f}")
                 candidate_conseq_list.append(kmer_seq)
         print(f"kmer counting finished for k={min_k}...{max_k}. Candidate consensus sequences generated.")
         write_lines(res, candidate_conseq_file)
@@ -639,9 +655,9 @@ def find_motif(seq_np_arr, kmer_len: int, max_ham_dist, p_unif,
     for i_trial in range(n_trial):
         # get the kmer with maximum hamming ball counts
         if top_k > len(uniq_kh_cnt_arr):
-            warnings.warn(f"There are only {len(uniq_kh_cnt_arr)} kmers, while top_k={top_k}. Set top_k={len(uniq_kh_cnt_arr)}")
-            assert len(uniq_kh_cnt_arr) > 0
-            top_k = len(uniq_kh_cnt_arr)
+            if debug:
+                print(f"There are only {len(uniq_kh_cnt_arr)} kmers, while top_k={top_k}. Set top_k={len(uniq_kh_cnt_arr)}")
+            break
         top_k_inds = np.array(np.argpartition(uniq_kh_cnt_arr, -top_k)[-top_k:])
         if len(top_k_inds) == 0:
             break
@@ -1309,6 +1325,22 @@ def get_motif_pos_density(occurence_file_path: Path, motif_index: int, kmer_len:
             lines_with_motif += 1
             total_occurrences += len(tmparr)
     return lines_with_motif, total_occurrences, density
+
+def get_motif_seq_num_from_fasta(input_fasta_file: Path, conseq: str, motif_def_dict: dict, revcom_mode: bool) -> Tuple[int, int]:
+    assert input_fasta_file.exists()
+
+    n_motif_read = 0
+    n_motif_occurence = 0
+    for i, record in enumerate(SeqIO.parse(str(input_fasta_file), "fasta")):
+        seq_np_arr = dna2arr(str(record.seq).upper(), append_missing_val_flag=False)
+        # print(f"{i=} seq_len={len(record.seq)} seq_np_arr_len={len(seq_np_arr)}")
+        motif_flag, motif_locations_str = get_motif_occurence(seq_np_arr, [conseq], motif_def_dict, revcom_mode)
+        if motif_flag:
+            n_motif_read += 1
+            n_motif_occurence += len(",".split(motif_locations_str))
+
+    return n_motif_read, n_motif_occurence
+
 
 def get_motif_seq_num(occurence_file_path: Path, motif_index: int) -> Tuple[int, int]:
     """

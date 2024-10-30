@@ -511,20 +511,35 @@ def plot_co_occur_motif_locations(occurence_file_path: Path, motif_index1: int, 
     plt.ylabel(f"{position_type} of motif {motif_index2}: {motif2} (RC: {rc_motif2})")
     plt.title(f"Co-occurrence of motifs {motif_index1} and {motif_index2} {info_str}. Origin is seq center.")
     
-    if relative_position_mode:
-        max_abs_val = max(abs(min(x_positions + y_positions)), abs(max(x_positions + y_positions)))
-        plt.xlim(-max_abs_val, max_abs_val)
-        plt.ylim(-max_abs_val, max_abs_val)
-        tick_interval = 0.1
-        ticks = np.arange(-np.ceil(max_abs_val*10)/10, np.ceil(max_abs_val*10)/10 + tick_interval, tick_interval)
-    else:
-        max_abs_val = max(abs(min(x_positions + y_positions)), abs(max(x_positions + y_positions)))
-        plt.xlim(-max_abs_val, max_abs_val)
-        plt.ylim(-max_abs_val, max_abs_val)
-        tick_interval = 10
-        ticks = np.arange(-np.ceil(max_abs_val/10)*10, np.ceil(max_abs_val/10)*10 + tick_interval, tick_interval)
+    # Automatically determine optimal number of ticks
+    def get_optimal_ticks(min_val, max_val, max_ticks=10):
+        """Calculate optimal tick positions to avoid overlap"""
+        range_val = max_val - min_val
+        # Try different intervals to find the best one
+        potential_intervals = [1, 2, 5, 10, 20, 25, 50, 100]
+        if relative_position_mode:
+            potential_intervals = [0.05, 0.1, 0.2, 0.25, 0.5]
+        
+        for interval in potential_intervals:
+            n_ticks = range_val / interval
+            if n_ticks <= max_ticks:
+                start = np.ceil(min_val / interval) * interval
+                end = np.floor(max_val / interval) * interval
+                ticks = np.arange(start, end + interval, interval)
+                return ticks
+        
+        # If no suitable interval found, use numpy's linspace
+        return np.linspace(min_val, max_val, max_ticks)
+
+    # Calculate optimal ticks based on the data range
+    max_abs_val = max(abs(min(x_positions + y_positions)), abs(max(x_positions + y_positions)))
+    ticks = get_optimal_ticks(-max_abs_val, max_abs_val)
     
-    plt.xticks(ticks, fontsize=8, rotation=60, ha='right')
+    plt.xlim(-max_abs_val, max_abs_val)
+    plt.ylim(-max_abs_val, max_abs_val)
+    
+    # Set ticks with rotated labels for x-axis
+    plt.xticks(ticks, fontsize=8, rotation=45, ha='right')
     plt.yticks(ticks, fontsize=8)
     
     # Add diagonal line
@@ -534,8 +549,9 @@ def plot_co_occur_motif_locations(occurence_file_path: Path, motif_index1: int, 
     plt.axhline(y=0, color='k', linestyle='--', linewidth=0.5, alpha=0.5)
     plt.axvline(x=0, color='k', linestyle='--', linewidth=0.5, alpha=0.5)
     
+    # Adjust layout to prevent label overlap
     plt.tight_layout()
-    plt.savefig(output_file, dpi=300)
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close()
 
 def random_position(pos_string: str) -> int:

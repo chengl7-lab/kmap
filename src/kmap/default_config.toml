@@ -14,7 +14,8 @@ motif_def_file = "default" # Can be changed to user defined "motif_def_table.csv
 noise_kmer_file = "None" # Can be set to user defined file, each line is a noise kmer (can be different length) to be removed from the input
 save_kmer_cnt_flag = true # if intermediate kmer count result should be saved
 motif_pos_density_flag = true # if motif postion distribution will be produced
-motif_co_occurence_flag = true # if motif co-occurence information will be produced
+store_conseq_occur_info_flag = true # storing cosensus occurence information, might take lots of time to compute
+motif_co_occurence_flag = true # if motif co-occurence figures will be produced
 co_occur_cutoff = 0.7 # cutoff for drawing an edge in the co-occurence network
 top_k = 5 # top 5 consensus sequences will be checked
 n_trial = 10 # try to find maximumly n_trial motifs from the data
@@ -22,6 +23,7 @@ sample_kmer_flag = true # if kmers will be sampled for visualization
 gen_hamball_flag = true # if generating count matrix
 n_total_sample = 5000 # total number of sampled kmers for visualization
 n_motif_sample = 2500 # number of motif kmers
+
 
 [visualization]
 random_seed = "default" # can be set to a specific number
