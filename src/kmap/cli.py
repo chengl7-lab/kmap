@@ -12,12 +12,12 @@ def cli():
 
 def display_paper_info():
     print()
-    print("This software is affiliated with the following paper:")
-    print("Title: Your Paper Title")
-    print("Authors: First Author, Second Author, Third Author")
-    print("Journal: Journal Name")
-    print("Year: 2023")
-    print("DOI: https://doi.org/your-paper-doi")
+    print("Citation")
+    print("KMAP: Kmer Manifold Approximation and Projection for visualizing DNA sequences")
+    print("Chengbo Fu, Einari A. Niskanen, Gong-Hong Wei, Zhirong Yang, Marta Sanvicente-García, Marc Güell, Lu Cheng*")
+    print("BioRxiv")
+    print("2024")
+    print("DOI: https://doi.org/10.1101/2024.04.12.589197")
 
 
 cli.add_command(preproc)
